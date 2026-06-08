@@ -49,6 +49,30 @@ def init_services(vs: VectorStore, ref, search):
     searcher = search
 
 
+# ── 安全模块实例（由 main.py 注入）──
+_audit_vault = None
+_fortress = None
+
+
+def _set_audit_vault(vault):
+    global _audit_vault
+    _audit_vault = vault
+
+
+def _set_fortress(fortress):
+    global _fortress
+    _fortress = fortress
+
+
+def _audit(action: str, detail: dict = None, user_id: str = None, ip: str = None):
+    """统一的审计记录入口"""
+    if _audit_vault:
+        try:
+            _audit_vault.record(action, detail, user_id, ip)
+        except Exception:
+            pass
+
+
 # ═══════════════════════════════════════════════════════════════
 # 路由：健康检查
 # ═══════════════════════════════════════════════════════════════
@@ -167,6 +191,7 @@ async def ingest_file(
     await db.commit()
 
     logger.info(f"砂金入库: {record.id} file={file.filename} size={file_size}")
+    _audit("ingest", {"file": file.filename, "size": file_size})
     return IngestResponse(
         id=record.id, status="qc_pending",
         file_hash=file_hash,
@@ -608,6 +633,7 @@ async def upload_doc(
     await db.commit()
 
     logger.info(f"用户上传: {record.id} file={file.filename} user={user_id}")
+    _audit("doc_upload", {"file": file.filename, "sand_id": record.id}, user_id)
     return IngestResponse(
         id=record.id, status="qc_pending",
         file_hash=file_hash,
@@ -650,6 +676,8 @@ async def update_diamond_doc(
 
     doc.updated_at = datetime.now(timezone.utc)
     await db.commit()
+
+    _audit("doc_update", {"doc_id": doc_id, "vault": "diamond"}, user_id)
 
     es = doc.emotional_spectrum or {}
     if isinstance(es, str):
@@ -729,4 +757,117 @@ async def delete_diamond_doc(
     await db.commit()
 
     logger.info(f"用户删除黑钻: {doc_id} user={user_id}")
+    _audit("doc_delete", {"doc_id": doc_id, "vault": "diamond"}, user_id)
     return DeleteResponse(status="deleted", id=doc_id, message="已删除（已停止衰减计算）")
+
+
+# ═══════════════════════════════════════════════════════════════
+# 路由：安全与维护 (Security)
+# 只有景幻仙姑（管理员）可以访问
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/security/status")
+async def security_status():
+    """🔒 安全状态总览"""
+    result = {
+        "fortress": None,
+        "integrity": None,
+        "audit": None,
+    }
+
+    # 堡垒检查
+    if _fortress:
+        result["fortress"] = _fortress.report()
+    else:
+        result["fortress"] = {"error": "未加载"}
+
+    # 完整性校验
+    try:
+        from app.security.integrity import IntegrityShield
+        shield = IntegrityShield()
+        integrity = shield.verify_startup()
+        result["integrity"] = {
+            "passed": integrity["passed"],
+            "file_count": integrity["file_count"],
+            "violations": integrity["violations"],
+        }
+    except Exception as e:
+        result["integrity"] = {"error": str(e)}
+
+    # 审计金库状态
+    if _audit_vault:
+        chain = _audit_vault.verify_chain()
+        result["audit"] = {
+            "records": chain["records"],
+            "chain_valid": chain["valid"],
+        }
+    else:
+        result["audit"] = {"error": "未加载"}
+
+    return result
+
+
+@router.get("/security/audit")
+async def get_audit_logs(
+    action: str = Query(None, description="按操作类型筛选"),
+    user_id: str = Query(None, description="按用户筛选"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """📋 查看审计日志（需管理员权限）"""
+    if not _audit_vault:
+        raise HTTPException(status_code=503, detail="审计金库未加载")
+
+    rows = _audit_vault.query(
+        user_id=user_id, action=action,
+        limit=limit, offset=offset,
+    )
+    return {"total": len(rows), "records": rows}
+
+
+@router.get("/security/audit/verify")
+async def verify_audit_chain():
+    """🔗 验证审计哈希链完整性"""
+    if not _audit_vault:
+        raise HTTPException(status_code=503, detail="审计金库未加载")
+
+    result = _audit_vault.verify_chain()
+    return result
+
+
+@router.post("/security/manifest/generate")
+async def generate_manifest():
+    """📝 生成/更新代码完整性 MANIFEST"""
+    try:
+        from app.security.integrity import IntegrityShield
+        shield = IntegrityShield()
+        path = shield.generate_manifest()
+        _audit("manifest_generate", {"path": path})
+        return {"status": "ok", "path": path, "message": "MANIFEST 已生成"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/security/backup")
+async def trigger_backup():
+    """💾 手动触发全量备份"""
+    try:
+        from app.core.backup import BackupManager
+        backup = BackupManager()
+        result = backup.run_full_backup()
+        _audit("backup_manual", {"tag": result["tag"]})
+        return {"status": "ok", **result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/security/backups")
+async def list_backups():
+    """📦 列出所有备份"""
+    try:
+        from app.core.backup import BackupManager
+        backup = BackupManager()
+        backups = backup.list_backups()
+        return {"backups": backups}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
