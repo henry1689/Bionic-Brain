@@ -28,7 +28,6 @@
     min-height: 100vh;
   }
 
-  /* ── 头部 ── */
   .header {
     display: flex; justify-content: space-between; align-items: flex-end;
     margin-bottom: 24px; padding-bottom: 16px;
@@ -47,13 +46,11 @@
     font-size: 13px; color: var(--text-dim); text-align: right;
   }
 
-  /* ── 网格 ── */
   .grid { display: grid; gap: 16px; margin-bottom: 20px; }
   .grid-4 { grid-template-columns: repeat(4, 1fr); }
   .grid-3 { grid-template-columns: repeat(3, 1fr); }
   .grid-2 { grid-template-columns: repeat(2, 1fr); }
 
-  /* ── 卡片 ── */
   .card {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 12px; padding: 18px 20px;
@@ -64,21 +61,15 @@
     font-size: 12px; color: var(--text-dim); text-transform: uppercase;
     letter-spacing: 0.5px; margin-bottom: 8px;
   }
-  .card-value {
-    font-size: 28px; font-weight: 700; margin-bottom: 4px;
-  }
-  .card-sub {
-    font-size: 12px; color: var(--text-dim);
-  }
+  .card-value { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+  .card-sub { font-size: 12px; color: var(--text-dim); }
 
-  /* ── 服务指示器 ── */
   .service-row {
     display: flex; justify-content: space-between; align-items: center;
     padding: 8px 0; border-bottom: 1px solid var(--border);
   }
   .service-row:last-child { border-bottom: none; }
   .service-name { font-size: 14px; display: flex; align-items: center; gap: 8px; }
-  .service-name .icon { font-size: 16px; }
   .badge {
     display: inline-block; padding: 2px 10px; border-radius: 10px;
     font-size: 12px; font-weight: 500;
@@ -88,7 +79,6 @@
   .badge-err { background: rgba(248,81,73,0.15); color: var(--red); }
   .badge-off { background: rgba(110,123,138,0.15); color: var(--text-dim); }
 
-  /* ── 统计格子 ── */
   .stat-grid { display: flex; gap: 12px; flex-wrap: wrap; }
   .stat-item {
     flex: 1; min-width: 100px; text-align: center;
@@ -98,7 +88,6 @@
   .stat-item .num { font-size: 24px; font-weight: 700; }
   .stat-item .label { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
 
-  /* ── 事件列表 ── */
   .event-item {
     padding: 10px 0; border-bottom: 1px solid var(--border);
     display: flex; gap: 12px; align-items: flex-start;
@@ -121,13 +110,11 @@
     margin-right: 4px;
   }
 
-  /* ── 空状态 ── */
   .empty {
     text-align: center; padding: 32px 0;
     color: var(--text-dim); font-size: 14px;
   }
 
-  /* ── 操作栏 ── */
   .actions {
     display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px;
   }
@@ -176,7 +163,7 @@
   </div>
 </div>
 
-<!-- ── 服务健康 ── -->
+<!-- 服务健康 -->
 <div class="grid grid-3">
   <div class="card">
     <div class="card-title">🔌 API 状态</div>
@@ -195,7 +182,7 @@
   </div>
 </div>
 
-<!-- ── 三库统计 ── -->
+<!-- 三库统计 -->
 <div class="grid grid-2">
   <div class="card">
     <div class="card-title">📦 三库统计</div>
@@ -246,13 +233,13 @@
   </div>
 </div>
 
-<!-- ── 操作栏 ── -->
+<!-- 操作栏 -->
 <div class="actions">
   <button class="btn btn-primary" onclick="refreshAll()">🔄 刷新</button>
   <button class="btn" onclick="triggerRefine()">🧠 手动提炼</button>
 </div>
 
-<!-- ── 黑钻事件 ── -->
+<!-- 黑钻事件 -->
 <div class="card" style="margin-bottom:20px">
   <div class="card-title">💎 黑钻事件 · 精选歌单</div>
   <div id="diamondList">
@@ -260,7 +247,7 @@
   </div>
 </div>
 
-<!-- ── Toast ── -->
+<!-- Toast -->
 <div class="toast" id="toast"></div>
 
 <script>
@@ -303,21 +290,18 @@ async function refreshHealth() {
   try {
     const h = await fetchJSON(`${API}/health`);
 
-    // API
     const apiOk = h.status === 'ok';
     apiEl.textContent = apiOk ? '✅ 正常' : '❌ 异常';
     apiEl.style.color = apiOk ? 'var(--green)' : 'var(--red)';
-    detailApi.textContent = '正常';
-    detailApi.className = 'badge badge-ok';
+    detailApi.textContent = apiOk ? '正常' : '异常';
+    detailApi.className = `badge ${apiOk ? 'badge-ok' : 'badge-err'}`;
 
-    // DB
     const dbOk = h.services?.database === 'ok';
     dbEl.textContent = dbOk ? '✅ 已连接' : '❌ 断开';
     dbEl.style.color = dbOk ? 'var(--green)' : 'var(--red)';
-    detailDb.textContent = dbOk ? '已连接' : h.services?.database || '未知';
+    detailDb.textContent = dbOk ? '已连接' : (h.services?.database || '未知');
     detailDb.className = `badge ${dbOk ? 'badge-ok' : 'badge-err'}`;
 
-    // Qdrant
     const qdOk = h.services?.qdrant === 'ok';
     qdEl.textContent = qdOk ? '✅ 已连接' : (h.services?.qdrant === 'unavailable' ? '⚠️ 未就绪' : '❌ 断开');
     qdEl.style.color = qdOk ? 'var(--green)' : (h.services?.qdrant === 'unavailable' ? 'var(--yellow)' : 'var(--red)');
@@ -329,6 +313,8 @@ async function refreshHealth() {
     apiEl.style.color = 'var(--red)';
     dbEl.textContent = '-';
     qdEl.textContent = '-';
+    detailApi.textContent = '无法连接';
+    detailApi.className = 'badge badge-err';
     showToast(`无法连接到 API: ${e.message}`);
   }
 }
@@ -343,13 +329,10 @@ async function refreshStats() {
     document.getElementById('diamondCount').textContent = s.black_diamond ?? 0;
     document.getElementById('totalCount').textContent = s.total ?? 0;
 
-    // 更新服务详情里的 MinIO/Redis 示意
-    const minioEl = document.getElementById('detailMinio');
-    const redisEl = document.getElementById('detailRedis');
-    minioEl.textContent = '就绪';
-    minioEl.className = 'badge badge-ok';
-    redisEl.textContent = '就绪';
-    redisEl.className = 'badge badge-ok';
+    document.getElementById('detailMinio').textContent = '就绪';
+    document.getElementById('detailMinio').className = 'badge badge-ok';
+    document.getElementById('detailRedis').textContent = '就绪';
+    document.getElementById('detailRedis').className = 'badge badge-ok';
 
   } catch (e) {
     console.error('Stats error:', e);
@@ -371,7 +354,6 @@ async function refreshDiamonds() {
       const es = ev.emotional_spectrum || {};
       const emotion = es.dominant_emotion || '';
       const sentiment = es.user_sentiment || '';
-
       const dotColor = ev.is_active ? 'var(--green)' : 'var(--text-dim)';
       const tags = (ev.tags || []).map(t => `<span class="event-tag">${t}</span>`).join('');
 
@@ -437,7 +419,10 @@ refreshAll();
 updateClock();
 setInterval(updateClock, 1000);
 
-// ── 景幻仙姑 · 管理员对话 ──
+// ═══════════════════════════════════════════════════════════════
+// 景幻仙姑 · 管理员对话
+// ═══════════════════════════════════════════════════════════════
+
 let _co=false;
 function _tc(){const p=document.getElementById('chatPanel');_co=!_co;p.classList.toggle('chat-open',_co);
   if(_co&&document.getElementById('chatMessages').children.length<=1)_sc('你好，景幻仙姑');}

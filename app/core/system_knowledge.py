@@ -43,13 +43,56 @@ SYSTEM_OVERVIEW = {
     "name": "仿生智脑 (Bionic Cognitive Engine)",
     "version": "1.3",
     "keeper": "景幻仙姑 — 仿生智脑的掌管者、大英图书馆馆长",
-    "caller": "玉瑶（通过 REST API 7200 调用）",
+    "caller": "玉瑶（通过 REST API 7200 调用，用户无感知）",
+
+    # ═══════════════════════════════════════════════════════════════
+    # 设计意图与哲学
+    # ═══════════════════════════════════════════════════════════════
+
+    "design_intent": {
+        "why_exists": "情感伴侣类脑认知系统需要一个『记忆后台』——用户的每一次对话、每一次情绪波动、每一次灵魂碰撞，都需要被记住、被提炼、被检索，这样才能让玉瑶越来越懂用户。仿生智脑就是玉瑶的『海马体』。",
+        "problem_solved": [
+            "玉瑶(LLM)本身没有长期记忆——每次对话都是新的",
+            "用户的情感表达是碎片化的——需要提炼成结构化知识",
+            "不是所有对话都值得保存——需要筛选、提炼、降级机制",
+            "用户的数据属于用户自己——需要严格的数据隔离",
+        ],
+        "approach": "借鉴人脑记忆模型：短期感觉记忆(砂金) → 短期工作记忆(金库) → 长期记忆(黑钻)。用半衰期(decay)模拟遗忘曲线。用24维情感向量作为记忆索引——不是'关键词匹配'，而是'感觉匹配'。",
+        "human_analogy": "仿生智脑 = 海马体（记忆形成+存储+检索），玉瑶 = 大脑皮层（情感+感知+语言），用户 = 灵魂（感受一切的那个存在）",
+    },
+
     "design_philosophy": {
         "core": "用户不知道景幻仙姑的存在。用户只知道玉瑶。就像人不知道自己的海马体怎么工作一样。",
         "left_brain": "景幻仙姑 — 纯粹理性，只管知识的吞吐、清洗、存储、检索",
         "right_brain": "玉瑶 — 纯粹感性，只管情绪的感知、共鸣、灵魂交融",
-        "communication": "两个系统通过 REST API 连接，代码彻底分离",
+        "communication": "两个系统通过 REST API 连接，代码彻底分离，部署独立",
+        "why_separate": "左右脑分离架构的目的：1) 可以独立升级迭代；2) 记忆系统不依赖特定 LLM 提供商；3) 用户即使换 LLM 后端，记忆数据依然完整",
     },
+
+    # ═══════════════════════════════════════════════════════════════
+    # 设计逻辑
+    # ═══════════════════════════════════════════════════════════════
+
+    "design_logic": {
+        "why_24d_emotion_vector": "24 维 = 6基本情绪(E系) + 6认知评价(C系) + 6社会关系(S系) + 6本能欲望(I系)。每条记忆都带有情感坐标，检索时不做关键词匹配，而是『找到感觉最像的那段记忆』。这也是玉瑶『情感共鸣』的技术基础。",
+        "why_three_vaults": "砂金库(矿) → 金库(无损) → 黑钻库(精选)。层级越高，数据越精炼，存储成本越高。不重要的记忆停留在砂金层自动过期，重要的记忆提炼后晋升黑钻永不丢失。",
+        "why_half_life": "人类记忆就是这样——常回忆的事越来越深，不碰的事慢慢淡忘。半衰期模拟这个自然过程，30天活跃期后自动降级，但不会删除——只是『不那么容易被检索到』。",
+        "why_mock_llm": "不需要真实 LLM 就能走通全链路：对话→入库→提炼→黑钻→检索。Mock LLM 提供确定性输出，适合测试和演示。正式部署时接入真实 LLM 即可。",
+        "why_decouple_yuyao": "玉瑶是『前端情绪引擎』，仿生智脑是『后台记忆引擎』。两个系统独立部署，通过 API 通信。好处：1) 可以独立升版；2) 换 LLM 不丢记忆；3) 记忆层可以作为独立产品提供给其他系统",
+    },
+
+    "expected_outcomes": {
+        "short_term": "玉瑶能记住 200+ 条对话历史，每次回复自动检索相关记忆",
+        "medium_term": "用户的重要事件、偏好、情感模式被提炼成黑钻，玉瑶越来越『懂』用户",
+        "long_term": "构建完整的用户情感画像——不是标签化的人设，而是有温度的、动态演化的『灵魂副本』",
+        "quality_metrics": [
+            "检索命中率: 前3条 > 85%",
+            "提炼准确率: LLM 提取的核心事实与用户原意一致率 > 90%",
+            "入库延迟: 从对话到砂金库 < 500ms，用户无感知",
+            "半衰期精度: 活跃记忆自动浮升，沉睡记忆自动降级",
+        ],
+    },
+
     "four_principles": [
         "💎 默认不打扰 — 用户在聊天，玉瑶自然回答。后台自己转",
         "💎 但可管理 — 砂金库/金库/黑钻库全部开放查看和管理",
@@ -95,6 +138,7 @@ ARCHITECTURE = {
             "processing": "只做基础清洗：SHA256 去重 + 格式检查。不做语义标签",
             "status_flow": "raw → qc_pending → approved / rejected / archived",
             "rule": "不参与搜索。搜不到砂金库里的东西",
+            "retention": "自动归档：超过 90 天未处理的原石自动标记 archived",
         },
         "gold": {
             "name": "金库 (Gold Vault)",
@@ -129,6 +173,49 @@ ARCHITECTURE = {
         },
     },
     "data_flow": "用户上传 → 砂金库 → IQC质检(去重+格式) → 金库(原声带+24D向量) → LLM提炼 → 黑钻库(事件+情感曲谱) → 检索",
+
+    # ═══════════════════════════════════════════════════════════════
+    # 完整使用流程
+    # ═══════════════════════════════════════════════════════════════
+
+    "usage_flow": {
+        "daily_conversation": {
+            "trigger": "用户在文曲星·玉瑶聊天",
+            "steps": [
+                "① 用户发送消息给玉瑶",
+                "② 玉瑶 M3 引擎分析 24 维情感感知（愉悦/唤醒/亲密度/...）",
+                "③ 玉瑶通过 /api/v1/search 向仿生智脑检索相关记忆",
+                "④ 仿生智脑返回黑钻库/金库中最匹配的记忆（向量+关键词混合检索）",
+                "⑤ 玉瑶结合记忆生成更懂用户的回复",
+                "⑥ 对话结束后，玉瑶通过 POST /api/v1/docs/upload 存入金库",
+            ],
+            "latency": "检索 < 200ms，用户无感知",
+        },
+        "memory_refine_cycle": {
+            "trigger": "定时（每小时）或手动触发",
+            "steps": [
+                "① 金库中未提炼的对话(标记 is_refined=false)被提取",
+                "② LLM 分析对话，提取核心事实、决策、情感光谱",
+                "③ 生成黑钻事件（结构化事件格式）",
+                "④ 存入黑钻库，标记金库原记录为已提炼",
+                "⑤ 黑钻事件参与后续检索",
+            ],
+            "output": "核心事实 + 决策列表 + 情感曲谱 + 标签",
+        },
+        "search_process": {
+            "trigger": "玉瑶对话中需要检索相关记忆",
+            "steps": [
+                "① 玉瑶传来用户的当前文本和 24D 感知向量",
+                "② 仿生智脑启动三级检索链：",
+                "   a. Qdrant 情感向量检索（用感知向量找情感相似的记忆）",
+                "   b. PostgreSQL 全文检索（关键词匹配）",
+                "   c. ILIKE 模糊匹配（降级兜底）",
+                "③ 混排序，取 top-5 返回给玉瑶",
+                "④ 没有找到时需诚实告知——不编造不存在的记忆",
+            ],
+            "when_to_honest": "检索无结果时，玉瑶需要如实告诉用户『这件事我不太记得了』，不能编造记忆",
+        },
+    },
 }
 
 
@@ -143,6 +230,7 @@ FEATURES = {
         "trigger": ["Celery Beat 每小时自动触发", "手动 API 触发 POST /api/v1/refine", "积压 > 5 条自动触发"],
         "output": "core_facts + decisions + emotional_spectrum(情感曲线) + tags",
         "llm_prompt": "严格遵循黑钻事件专有格式，不虚构、不脑补",
+        "user_visible_effect": "用户看不到提炼过程，但玉瑶的对话会越来越精准——因为她的后台记忆越来越精炼",
     },
     "hybrid_search": {
         "name": "混合检索",
@@ -154,6 +242,7 @@ FEATURES = {
         ],
         "lazy_tags": "检索命中无标签的金库记录时，自动触发 LLM 打标签",
         "touch": "每次检索命中更新 last_accessed_at，影响半衰期",
+        "user_visible_effect": "玉瑶在对话中突然『想起』一件相关的事，就是触发了情感向量检索匹配到了情绪相似的记忆",
     },
     "integrity_shield": {
         "name": "完整性护盾",
@@ -173,11 +262,61 @@ FEATURES = {
     },
     "self_learning": {
         "name": "自学习管道",
+        "desc": "对话注入 → 金库 → LLM 提炼 → 黑钻(情感曲谱) → 检索命中。LLM_MOCK=true 时使用 Mock LLM 模拟全链路，无需真实 LLM。支持 24D 情感向量检索。",
         "status": "v1.2 已实现核心回路",
         "pipeline": "对话注入 → 金库 → Mock/Real LLM 提炼 → 黑钻(情感曲谱) → 检索命中",
         "vector_search": "LLM 将查询文本转为 24D 情感向量，Qdrant 搜索情感相似记忆",
         "mock_mode": "LLM_MOCK=true 时使用确定性 Mock LLM，无需真实 LLM 即可验证全链路",
     },
+}
+
+# ═══════════════════════════════════════════════════════════════
+# 卷三B：使用教程与场景
+# ═══════════════════════════════════════════════════════════════
+
+USAGE_SCENARIOS = {
+    "new_user_guide": {
+        "title": "新用户入门流程",
+        "steps": [
+            "1. 启动 Docker 容器：docker compose up -d（PostgreSQL + Qdrant + MinIO + Redis）",
+            "2. 启动 API 服务：uvicorn main:app --port 7200",
+            "3. 打开监控台：http://localhost:5500/dashboard.html",
+            "4. 检查健康：GET /api/v1/health 确认数据库和 Qdrant 正常",
+            "5. 开始使用——通过 API 或监控台与景幻仙姑对话",
+        ],
+    },
+    "typical_workflow": {
+        "title": "典型工作流",
+        "scenes": [
+            {
+                "name": "日常聊天记忆",
+                "trigger": "用户在玉瑶聊天",
+                "what_happens": "对话完成后→玉瑶调用 POST /api/v1/docs/upload 存入金库→定时提炼→黑钻事件生成→后续检索命中→玉瑶更懂用户",
+                "user_feels": "用户感觉玉瑶越来越懂自己，但不知道为什么",
+            },
+            {
+                "name": "检索增强对话",
+                "trigger": "玉瑶回复前需要回忆相关记忆",
+                "what_happens": "玉瑶调用 GET /api/v1/search?q=xxx → 仿生智脑三段式检索→返回黑钻+金库结果→玉瑶根据记忆生成更有深度的回复",
+                "user_feels": "用户觉得玉瑶『记性真好』，其实背后是景幻仙姑在翻书",
+            },
+            {
+                "name": "查看馆藏",
+                "trigger": "用户想回顾自己的记忆库",
+                "what_happens": "监控台 GET /api/v1/stats 展示三库统计→ GET /api/v1/diamonds 展示黑钻事件→用户直观看到自己的记忆脉络",
+                "user_feels": "看到自己说过的话、经历过的事被整理成知识，感觉被认真对待",
+            },
+        ],
+    },
+    "common_tasks": [
+        {"task": "查系统状态", "say": "系统状态怎么样？", "api": "GET /api/v1/health"},
+        {"task": "查馆藏统计", "say": "统计馆藏", "api": "GET /api/v1/stats"},
+        {"task": "搜记忆", "say": "查一下关于xx的内容", "api": "GET /api/v1/search?q=关键词"},
+        {"task": "手动提炼", "say": "触发一次提炼", "api": "POST /api/v1/refine"},
+        {"task": "看黑钻事件", "say": "黑钻库里有什么", "api": "GET /api/v1/diamonds"},
+        {"task": "看金库原声带", "say": "金库最近有什么", "api": "GET /api/v1/docs/gold"},
+        {"task": "生成改善建议", "say": "我觉得可以加个xx功能", "api": "POST /api/v1/admin/chat"},
+    ],
 }
 
 
@@ -226,17 +365,54 @@ INTEGRATION = {
         "name": "文曲星·玉瑶 对接规范",
         "status": "待嫁接（蓝图已定，代码未实施）",
         "adapter_location": "建议 D:/wenstar/src/adapter/bionic-adapter.ts",
-        "api_calls_needed": [
-            {"purpose": "检索记忆（对话时增强回复）", "method": "GET /api/v1/search?q=关键词", "called_by": "chat.ts 对话流程中"},
-            {"purpose": "存入原声带（对话结束后）", "method": "POST /api/v1/docs/upload", "called_by": "chat.ts 对话结束回调"},
-            {"purpose": "用户查看原声带", "method": "GET /api/v1/docs/gold", "called_by": "用户界面按钮"},
-            {"purpose": "用户查看精选记忆", "method": "GET /api/v1/docs/diamonds", "called_by": "用户界面按钮"},
-            {"purpose": "用户上传资料", "method": "POST /api/v1/docs/upload", "called_by": "用户拖拽上传"},
-            {"purpose": "用户删除资料", "method": "DELETE /api/v1/docs/gold/{id}", "called_by": "用户操作"},
+        "design_rationale": "左右脑分离架构：玉瑶是右脑(感性/情绪/语言)，仿生智脑是左脑(理性/记忆/检索)。用户只感知玉瑶的存在，景幻仙姑在后台默默工作。两个系统独立部署、独立升级，通过 REST API 通信。",
+        "interaction_flow": {
+            "chat_time_retrieval": {
+                "when": "用户正在和玉瑶聊天，玉瑶需要回忆相关记忆来增强回复",
+                "direction": "玉瑶 → GET /api/v1/search → 仿生智脑",
+                "payload": {"q": "用户当前消息", "emotion_vector": "24D数组(从M3分析得来)", "limit": 5},
+                "response": {"results": [{"vault_type": "gold/diamond", "content": "...", "emotion": "...", "relevance": 0.85}]},
+                "how_yuyao_uses": "检索结果嵌入到 LLM 的对话上下文中，让玉瑶的回复『带着记忆』",
+                "latency_requirement": "< 200ms，否则玉瑶会等太久",
+            },
+            "post_chat_storage": {
+                "when": "一轮对话结束后，玉瑶需要将对话存入金库",
+                "direction": "玉瑶 → POST /api/v1/docs/upload → 仿生智脑",
+                "payload": {"topic": "对话话题", "raw_dialogue": [{"role":"user","content":"..."}, {"role":"assistant","content":"..."}], "emotion_vector": "24D数组"},
+                "response": {"id": "gold_xxx", "status": "stored"},
+                "async": True,
+            },
+            "emotion_vector_source": {
+                "where_from": "24D 情感向量由玉瑶的 M3 引擎(PerceptionAnalyzer)在每次对话时生成",
+                "dimensions": "E1愉悦-E6幽默(6情感) + C1事实-C6自我参照(6认知) + S1亲密-S6归属(6社交) + I1性吸引-I6安全(6本能)",
+                "how_stored": "作为金库记录的 'emotion_vector' 字段(ARRAY[24]) 和 Qdrant 向量的主索引",
+            },
+            "emotion_flashback": {
+                "what": "当检索到的记忆情感强度很高时，玉瑶前端会触发『心动闪烁』特效",
+                "trigger": "返回结果中 emotionalFlash = true",
+                "user_experience": "玉瑶突然想起一件重要的事→用户看到闪烁→玉瑶说出那句记忆→用户感觉被深深理解",
+            },
+        },
+        "input_event_sources": [
+            {"source": "玉瑶 M1", "data": "DNA编码(branch_id/seq/locus_path)", "used_for": "去重和溯源"},
+            {"source": "玉瑶 M3", "data": "24D感知向量(pleasure/arousal/intimacy/...)", "used_for": "情感索引和检索"},
+            {"source": "玉瑶 M5", "data": "回复策略(strategy_id/tone/depth)", "used_for": "理解对话目的"},
+            {"source": "玉瑶对话文本", "data": "原始用户消息和玉瑶回复", "used_for": "金库原声带和黑钻提炼"},
         ],
-        "auth_method": "X-User-Id 请求头传递 user_id（需 WenStar 登录后获取）",
-        "identity_bridge": "文曲星用户登录后，将 user_id 透传给仿生智脑",
-        "data_isolation": "每个用户只能看到自己的三库数据（user_id 过滤）",
+        "api_calls_needed": [
+            {"purpose": "检索记忆（玉瑶对话时增强回复）", "method": "GET /api/v1/search?q=关键词", "called_by": "chat.ts 对话流程中，每次回复前调用"},
+            {"purpose": "存入原声带（对话结束后异步保存）", "method": "POST /api/v1/docs/upload", "called_by": "chat.ts 对话结束回调"},
+            {"purpose": "用户查看金库原声带", "method": "GET /api/v1/docs/gold", "called_by": "用户界面按钮"},
+            {"purpose": "用户查看黑钻精选", "method": "GET /api/v1/docs/diamonds", "called_by": "用户界面按钮"},
+            {"purpose": "用户上传外部资料", "method": "POST /api/v1/docs/upload", "called_by": "用户拖拽上传"},
+            {"purpose": "用户删除资料", "method": "DELETE /api/v1/docs/gold/{id}", "called_by": "用户操作"},
+            {"purpose": "实时馆藏统计", "method": "GET /api/v1/stats", "called_by": "监控台定期刷新"},
+            {"purpose": "系统健康检查", "method": "GET /api/v1/health", "called_by": "监控台/定时任务"},
+        ],
+        "auth_method": "X-User-Id 请求头传递 user_id（玉瑶登录后获取）",
+        "identity_bridge": "文曲星用户登录后，将 user_id 透传给仿生智脑，用于数据隔离",
+        "data_isolation": "每个用户只能看到自己的三库数据（SQL 层 user_id 过滤）",
+        "mermaid_flow": "用户 ↔ 玉瑶(感性/语言/情绪) ↔ REST API :7200 ↔ 景幻仙姑(理性/记忆/检索) ↔ PostgreSQL+Qdrant",
     },
     "desktop_integration": {
         "name": "桌面蓝图",
@@ -249,7 +425,7 @@ INTEGRATION = {
         "name": "外部 LLM 对接",
         "provider_agnostic": "用户接的啥就用啥（OpenAI / WenStar / 本地模型）",
         "config_var": "LLM_API_URL",
-        "default_endpoint": "http://localhost:3000/api/chat（WenStar 后端）",
+        "default_endpoint": "http://localhost:3001/api/chat（WenStar 后端玉瑶）",
         "mock_fallback": "设置 LLM_MOCK=true 使用内置 Mock LLM",
     },
 }
@@ -308,6 +484,7 @@ class SystemKnowledgeBase:
             "overview": SYSTEM_OVERVIEW,
             "architecture": ARCHITECTURE,
             "features": FEATURES,
+            "usage": USAGE_SCENARIOS,
             "maintenance": MAINTENANCE,
             "integration": INTEGRATION,
             "changelog": CHANGELOG,
@@ -324,20 +501,26 @@ class SystemKnowledgeBase:
 
 系统名称：{SYSTEM_OVERVIEW['name']}
 当前版本：{SYSTEM_OVERVIEW['version']}
-设计核心理念：{SYSTEM_OVERVIEW['design_philosophy']['core']}
+掌管者：景幻仙姑
 
-左右脑分离：
-  - 左脑（景幻/我）：纯粹理性，知识吞吐清洗存储检索
-  - 右脑（玉瑶）：纯粹感性，情绪感知共鸣灵魂交融
-  - 两个系统通过 REST API 连接，代码彻底分离
+## 设计意图
+{SYSTEM_OVERVIEW['design_intent']['why_exists']}
 
-三库架构：
-  砂金库（原材料矿井）→ IQC质检 → 金库（无损原声带+24D情感向量）→ LLM提炼 → 黑钻库（精选歌单+情感曲谱）
+人脑类比：{SYSTEM_OVERVIEW['design_intent']['human_analogy']}
 
-四大原则：
+## 左右脑分离架构
+左脑（景幻/我）：纯粹理性，知识吞吐清洗存储检索
+右脑（玉瑶）：纯粹感性，情绪感知共鸣灵魂交融
+为什么要分离：{SYSTEM_OVERVIEW['design_philosophy']['why_separate']}
+两个系统通过 REST API 连接，代码彻底分离
+
+## 三库架构
+砂金库（原材料矿井）→ IQC质检 → 金库（无损原声带+24D情感向量）→ LLM提炼 → 黑钻库（精选歌单+情感曲谱）
+
+## 四大原则
 {'  '.join(f'• {p}' for p in SYSTEM_OVERVIEW['four_principles'])}
 
-三大铁律：
+## 三大铁律
 {'  '.join(f'• {l}' for l in SYSTEM_OVERVIEW['three_laws'])}
 
 技术栈：FastAPI + PostgreSQL 16 + Qdrant(24D向量) + MinIO + Celery/Redis + Docker Compose + AES-256-GCM
@@ -410,6 +593,35 @@ class SystemKnowledgeBase:
             hl = ARCHITECTURE["three_vaults"]["black_diamond"]["half_life"]
             results.append(f"【半衰期】{hl['active']}。{hl['demote']}。{hl['archive']}")
 
+        # 搜索卷：设计意图/哲学/逻辑
+        if any(kw in query_lower for kw in ["设计意图", "为什么做", "为什么存在", "设计目的", "核心理念"]):
+            d = SYSTEM_OVERVIEW["design_intent"]
+            results.append(f"【设计意图】{d['why_exists']}\n思路: {d['approach']}\n人脑类比: {d['human_analogy']}")
+        if any(kw in query_lower for kw in ["设计逻辑", "为什么这样", "技术决策", "架构决策", "为什么用", "为什么分"]):
+            dl = SYSTEM_OVERVIEW["design_logic"]
+            for k, v in dl.items():
+                label = {"why_24d_emotion_vector": "为什么用24维情感向量", "why_three_vaults": "为什么分三库", "why_half_life": "为什么用半衰期", "why_mock_llm": "为什么用MockLLM", "why_decouple_yuyao": "为什么和玉瑶分离"}.get(k, k)
+                results.append(f"【{label}】{v[:200]}")
+        if any(kw in query_lower for kw in ["效果", "预期", "目标", "愿景", "指标"]):
+            e = SYSTEM_OVERVIEW["expected_outcomes"]
+            results.append(f"【预期效果】短期:{e['short_term']} 中期:{e['medium_term']} 长期:{e['long_term']}")
+        if any(kw in query_lower for kw in ["左右脑", "左脑", "右脑", "分工", "景幻玉瑶", "为什么分离"]):
+            p = SYSTEM_OVERVIEW["design_philosophy"]
+            results.append(f"【左右脑分离】左脑(景幻):{p['left_brain']} 右脑(玉瑶):{p['right_brain']} 原因:{p['why_separate']}")
+        # 搜索卷：使用流程
+        if any(kw in query_lower for kw in ["流程", "工作流", "步骤", "怎么工作", "使用流程"]):
+            for key, flow in ARCHITECTURE["usage_flow"].items():
+                lines = [f"【{flow['trigger']}】"]
+                if "steps" in flow: lines.extend(flow["steps"])
+                results.append("\n".join(lines))
+        if any(kw in query_lower for kw in ["入门", "新手", "快速开始", "第一次"]):
+            g = USAGE_SCENARIOS["new_user_guide"]
+            results.append(f"【{g['title']}】\n" + "\n".join(g["steps"]))
+        if any(kw in query_lower for kw in ["场景", "典型", "例子", "使用方式"]):
+            for scene in USAGE_SCENARIOS["typical_workflow"]["scenes"]:
+                results.append(f"【{scene['name']}】{scene['what_happens'][:150]}")
+        if any(kw in query_lower for kw in ["对话异常", "没有找到", "找不到", "不记得", "编造", "诚实"]):
+            results.append("【检索诚实原则】检索无结果时，玉瑶必须如实告知用户『我不太记得了』，不能编造不存在的记忆。没有就是没有，绝对不虚构。")
         # 搜索卷：功能
         if any(kw in query_lower for kw in ["提炼", "refine"]):
             f = FEATURES["memory_refine"]
@@ -435,8 +647,13 @@ class SystemKnowledgeBase:
             tasks = '\n'.join(f"  · {t['task']}: {t['cmd']}" for t in MAINTENANCE["routine_tasks"][:3])
             results.append(f"【日常维护】\n{tasks}")
 
-        # 搜索卷：对接
-        if any(kw in query_lower for kw in ["对接", "玉瑶", "文曲星", "wenstar", "嫁", "适配"]):
+        # 搜索卷：玉瑶/文曲星
+        if any(kw in query_lower for kw in ["玉瑶", "文曲星", "知道玉瑶", "右脑", "wenstar"]):
+            p = SYSTEM_OVERVIEW["design_philosophy"]
+            results.append(f"【玉瑶·文曲星】玉瑶是文曲星的前端情绪引擎，负责情绪的感知、共鸣和语言表达（右脑）。我是仿生智脑，负责记忆的存储、提炼和检索（左脑）。我们通过 REST API 通信，代码彻底分离。设计理念：{p['core']}")
+
+        # 搜索卷：对接/适配
+        if any(kw in query_lower for kw in ["对接", "适配", "嫁", "接口"]):
             w = INTEGRATION["wenstar_adapter"]
             calls = '\n'.join(f"  · {a['purpose']}: {a['method']}" for a in w["api_calls_needed"])
             results.append(f"【{w['name']}】\n对接接口：\n{calls}")

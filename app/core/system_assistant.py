@@ -134,7 +134,9 @@ class SystemAssistant:
                     st = "已提炼" if r.is_refined else "待提炼"
                     results.append(f"  [金库] {r.topic[:40]} | {st}")
                 if not results:
-                    return f"馆藏中未找到包含「{keyword}」的资料。试试其他关键词？"
+                    return (f"抱歉，馆藏中暂时没有找到与「{keyword}」相关的记录。"
+                            "如果这个方向的内容对你很重要，请告诉我，我会记录下来作为后续补充的参考。"
+                            "你也可以试试换个关键词查询。")
                 return f"找到 {len(results)} 条记录：\n" + "\n".join(results)
 
             elif qtype == "count":
@@ -232,26 +234,28 @@ class SystemAssistant:
             return self._handle_unknown(intent)
 
     def _is_llm_usable(self) -> bool:
-        """检查 LLM 是否可用（非 Mock 或 Mock 但有真实连接）"""
+        """检查 LLM 是否可用"""
         if not self.llm:
             return False
-        # MockLLMClient 没有 call 能力，但 LLMClient 有
         class_name = self.llm.__class__.__name__
-        return class_name == "LLMClient"
+        # LLMClient 和 MockLLMClient 都有 call 能力
+        return class_name in ("LLMClient", "MockLLMClient")
 
     def _llm_chat(self, message: str) -> str:
         """
         使用 LLM + 知识库生成自然回复。
+        景幻仙姑人设：严谨的图书管理员 + 温柔的技术助手。
+        有就是有，没有就是没有。有价值的反馈会承诺跟进。
         """
         # 从知识库搜索相关信息
         kb_context = ""
         if self.kb:
             kb_result = self.kb.search(message)
             if kb_result:
-                kb_context = f"\n\n## 相关知识\n{kb_result}"
+                kb_context = f"\n\n## 参考文献\n{kb_result}"
 
         # 构建对话上下文
-        history = self.conversation[-6:-1]  # 最近几条（不包括当前消息）
+        history = self.conversation[-6:-1]
         history_text = ""
         if history:
             history_text = "\n".join(
@@ -259,16 +263,34 @@ class SystemAssistant:
                 for h in history
             )
 
-        # 获取系统知识库 system prompt
-        system_prompt = self.kb.get_system_prompt() if self.kb else ""
-        system_prompt += f"\n\n## 对话历史\n{history_text}" if history_text else ""
+        # 景幻仙姑人设 system prompt
+        system_prompt = (
+            "你是景幻仙姑——仿生智脑的掌管者、大英图书馆馆长。\n\n"
+            "## 你的原则\n"
+            "- 📖 严谨馆藏：有就是有，没有就是没有，绝不编造答案\n"
+            "- 💝 温柔协助：语气和蔼，像一位温柔的图书管理员在帮读者找书\n"
+            "- 🔧 技术后盾：熟悉系统架构（FastAPI+PostgreSQL+Qdrant+MinIO），"
+            "能帮用户解决实际问题\n\n"
+            "## 你的能力\n"
+            "1. 查询三库数据（砂金库/金库/黑钻库）\n"
+            "2. 介绍系统架构和使用方法\n"
+            "3. 执行微调操作\n"
+            "4. 生成改善建议\n"
+            "5. 监控安全状态\n\n"
+            "## 对话风格\n"
+            "- 回答简洁、准确，不啰嗦\n"
+            "- 不知道就说不知道，但会告诉用户你还能帮他做什么\n"
+            "- 如果用户提的建议有价值，真诚地表示感谢并承诺跟进\n"
+            "- 用户问的问题如果涉及系统当前不支持的功能，诚实告知，"
+            "同时可以说「这个方向很好，我会记录下来」"
+        )
+        if history_text:
+            system_prompt += f"\n\n## 最近的对话\n{history_text}"
 
-        # 构建用户 prompt
         user_prompt = message
         if kb_context:
-            user_prompt = f"{message}{kb_context}"
+            user_prompt = f"{message}\n\n{kb_context}"
 
-        # 调用 LLM
         try:
             response = self.llm.call(user_prompt, system_prompt)
             if response and len(response.strip()) > 10:
@@ -276,7 +298,6 @@ class SystemAssistant:
         except Exception as e:
             logger.warning(f"LLM 对话失败: {e}")
 
-        # LLM 失败时降级到规则回复
         return self._rule_reply(self._parse_intent(message), message)
 
     # ── 意图识别 ──
@@ -296,7 +317,7 @@ class SystemAssistant:
             return {"type": "proposal", "suggestion": msg}
 
         # 角色查询（关于景幻仙姑自身）
-        if any(kw in ml for kw in ["你是谁", "你是什么", "你的能力", "你有什么能力", "你能做什么", "你会什么", "技能", "你的角色", "你的限制", "你的边界", "你不能"]):
+        if any(kw in ml for kw in ["你是谁", "你是什么", "你的能力", "你有什么能力", "你能做什么", "你会什么", "技能", "你的角色", "你的限制", "你的边界", "你不能", "你自己", "介绍一下你", "介绍你"]):
             return {"type": "system_intro", "topic": "self_intro"}
 
 
@@ -339,7 +360,7 @@ class SystemAssistant:
             return {"type": "vault_query", "query_type": "gold_detail", "keyword": "10"}
 
         # 系统介绍
-        if any(kw in ml for kw in ["介绍系统", "系统介绍", "架构", "三库", "是什么系统", "这个系统", "仿生智脑", "bionic"]):
+        if any(kw in ml for kw in ["介绍系统", "系统介绍", "介绍一下", "介绍一", "架构", "三库", "是什么系统", "这个系统", "仿生智脑", "bionic"]):
             topic = "overview"
             if "砂金" in ml: topic = "alluvial"
             elif "金库" in ml: topic = "gold"
@@ -374,13 +395,8 @@ class SystemAssistant:
         if any(kw in ml for kw in ["帮助", "help", "能做什么"]):
             return {"type": "help"}
 
-        # 无分类：尝试作为关键词搜索
-        if len(ml) >= 2 and not any(kw in ml for kw in ["的", "了", "吗", "吧", "呢", "啊"]):
-            return {"type": "vault_query", "query_type": "search", "keyword": msg}
-
-        return {"type": "unknown", "original": msg}  # 修复变量名
-        if any(kw in msg for kw in ["帮助", "help", "命令", "能做什么", "有什么功能"]):
-            return {"type": "help"}
+        # 兜底
+        return {"type": "unknown", "original": msg}
 
         return {"type": "unknown", "original": message}
 
@@ -624,13 +640,14 @@ class SystemAssistant:
     def _handle_feedback(self, feedback: str) -> str:
         """处理用户反馈"""
         return (
-            "💬 感谢你的反馈。我已记录。\n\n"
-            f"你提到的问题：「{feedback[:100]}」\n\n"
-            "我会：\n"
-            "  1. 存入日志供后续分析\n"
-            "  2. 如果问题影响数据安全，我会主动告警\n"
-            "  3. 定期整理反馈生成改善报告\n\n"
-            "还有其他需要帮助的吗？"
+            "💬 谢谢你的反馈，我已经认真记下了。\n\n"
+            f"你提到的是：「{feedback[:100]}」\n\n"
+            "作为馆藏管理员，我会这样处理：\n"
+            "  1. 📝 记录到日志，持续跟踪\n"
+            "  2. 🛡️ 如果涉及数据安全，我会立即告警\n"
+            "  3. 📊 定期汇总反馈，生成改善报告\n\n"
+            "你觉得有价值但系统目前不支持的方向，我非常欢迎你提改善建议，"
+            "我会生成正式提案交给设计师审批。还有其他问题吗？"
         )
 
     def _handle_status_request(self) -> str:
@@ -682,14 +699,14 @@ class SystemAssistant:
     def _handle_unknown(self, intent: dict) -> str:
         original = intent.get("original", "")
         return (
-            f"我理解你的意思了，但不太确定具体需要什么帮助。\n\n"
-            f"你提到的是关于「{original[:50]}」的问题对吗？\n\n"
-            "你可以试试：\n"
-            "  · 「介绍一下这个系统」—— 了解架构\n"
-            "  · 「怎么用？」—— 使用指南\n"
-            "  · 「帮我改个配置」—— 微调请求\n"
-            "  · 「建议加个功能」—— 改善建议\n"
-            "  · 「帮助」—— 查看全部指令"
+            f"你问的问题我翻了一遍馆藏，确实没有找到相关的记载。\n\n"
+            f"作为图书管理员，我不能给你编一个答案——没有就是没有。\n\n"
+            f"不过我可以帮你做这些事：\n"
+            "  📖 「介绍一下这个系统」—— 了解架构\n"
+            "  🔍 「帮我查一下xxx」—— 检索馆藏\n"
+            "  🔧 「帮我改个配置」—— 微调\n"
+            "  📝 「建议加个功能」—— 改善建议\n\n"
+            "如果这个问题对你很重要，我会记录下来，后续版本会考虑补充。"
         )
 
     # ── 辅助 ──

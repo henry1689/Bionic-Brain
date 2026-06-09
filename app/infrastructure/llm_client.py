@@ -334,19 +334,82 @@ class MockLLMClient:
     """
     模拟 LLM 客户端（测试 & 演示用）。
 
-    当真实 LLM 端点不可用时，使用此模拟客户端提供确定性响应。
-    帮助验证完整的"金库→提炼→黑钻→检索"管道是否通畅。
-
-    使用方法（在 .env 中设置 TX_LLM_MOCK=true）：
-      系统自动切换为 MockLLMClient
+    景幻仙姑——大英图书馆馆长。
+    严谨：有就有，没有就没有，不编造。
+    温度：温柔和蔼，协助解决问题。
+    技术：熟悉系统每一层架构和工具。
     """
 
     def __init__(self):
         self._stats = {"calls": 0, "success": 0, "failed": 0}
 
     def call(self, prompt: str, system_prompt: str = "") -> Optional[str]:
+        # MOCK_LLM_V3 - debug marker to verify code is updated
         self._stats["calls"] += 1
-        return "模拟响应"
+        self._stats["success"] += 1
+        full = (prompt or "").lower()
+        # 只取用户原始消息（"## 参考文献" 之前的纯用户输入）
+        ref_marker = "## 参考文献"
+        idx = full.find(ref_marker)
+        user_text = full[:idx].strip() if idx >= 0 else full
+        user_text = user_text[:300]
+        import logging
+        _log = logging.getLogger('bionic.mock_llm')
+        if '设计意图' in user_text or '玉瑶' in prompt[:80]:
+            _log.warning(f'MOCK_DEBUG user_text=[{user_text}] 玉瑶={"玉瑶" in user_text} prompt_start=[{prompt[:80]}]')
+
+        # ── 优先匹配：特定领域问题 ──
+        # 玉瑶/文曲星
+        if any(kw in user_text for kw in ["玉瑶", "文曲星", "右脑"]):
+            return ("玉瑶是文曲星的前端情绪引擎，也就是用户直接对话的那个存在。"
+                    "她负责情绪的感知、共鸣和语言表达——是右脑。"
+                    "我是仿生智脑，负责记忆的存储、提炼和检索——是左脑。"
+                    "我们两个系统通过 REST API 通信，代码彻底分离，但共同构成了完整的情感伴侣系统。"
+                    "用户只知道玉瑶，不知道我的存在——就像人不知道自己的海马体怎么工作一样。")
+
+        # 系统介绍
+        if any(kw in user_text for kw in ["介绍系统", "系统介绍", "介绍一下"]):
+            return ("仿生智脑 v1.1 采用三库流转架构：\n\n"
+                    "📥 砂金库 — 原始对话记录，待质检\n"
+                    "→ 提炼 →\n"
+                    "📚 金库 — 精炼知识，按话题组织\n"
+                    "→ 二次提炼 →\n"
+                    "💎 黑钻库 — 核心智慧，带情感标签的精选记忆\n\n"
+                    "技术栈：FastAPI + PostgreSQL + Qdrant(24D情感向量) + MinIO\n"
+                    "文档在 ARCHITECTURE.md 中有完整说明。需要我深入介绍某个模块吗？")
+
+        # ── 通用问候 ──
+        if any(kw in user_text for kw in ["你好", "您好", "hi", "hello", "在吗"]):
+            return "您好，我是景幻仙姑，仿生智脑的掌管者。馆藏目前有砂金库、金库、黑钻库三层。您想了解什么？我帮您查。"
+
+        # 文档/资料/说明查询
+        if any(kw in text for kw in ["文档", "说明", "手册", "资料", "使用说明"]):
+            return ("系统核心文档在项目根目录的 ARCHITECTURE.md 中，涵盖完整架构说明、三库流转机制和 API 文档。"
+                    "另外 README.md 有快速入门指南，.env.example 有环境变量说明。\n\n"
+                    "如果你需要了解某个具体功能（如备份、提炼、检索），直接问我就好，"
+                    "我随时可以帮你查馆藏数据或介绍系统功能。")
+
+        # 功能问题
+        if any(kw in text for kw in ["备份"]):
+            return "备份系统已就绪，三库数据通过 Docker 定期自动备份到 MinIO（localhost:9000）。你也可以在监控台点「触发备份」手动执行。需要我介绍一下备份策略吗？"
+
+        if any(kw in text for kw in ["提炼"]):
+            return "提炼是将砂金库的原石加工成金库知识的过程。系统定时自动运行，你也可以手动触发。提炼后的知识如果质量高，会进一步晋升到黑钻库。当前的提炼统计可以在监控台看到。"
+
+        if any(kw in text for kw in ["检索", "搜索", "查找"]):
+            return "系统支持两套检索：\n1. 关键词搜索 — 查金库和黑钻库的文本内容\n2. 情感向量检索 — 基于24维情感相似度搜索（需 Qdrant）\n直接告诉我你想找什么，我帮你查。"
+
+        # 感谢
+        if any(kw in text for kw in ["谢谢", "感谢"]):
+            return "不客气～有什么需要随时叫我。查数据、介绍功能、提建议，我都在。"
+
+        # 反馈/报错
+        if any(kw in text for kw in ["反馈", "问题", "bug", "错误", "报错", "不好用"]):
+            return ("感谢你的反馈，我会认真记录。如果是系统功能方面的问题，可以告诉我具体场景，"
+                    "我能修的小问题直接帮你处理；需要大改动的会生成改善建议提交设计师审批。")
+
+        # 兜底——返回空让 _llm_chat 降级到 _rule_reply 走知识库搜索
+        return None
 
     def emotion_vector_from_text(self, text: str) -> Optional[list]:
         """
