@@ -949,6 +949,7 @@ def _set_admin_assistant(assistant):
 @router.post("/admin/chat")
 async def admin_chat(
     body: dict,
+    db: AsyncSession = Depends(get_db),
     user_id: str = Depends(_get_user_id),
 ):
     """
@@ -966,7 +967,7 @@ async def admin_chat(
         raise HTTPException(status_code=400, detail="消息太长")
 
     try:
-        result = _admin_assistant.chat(message, user_id)
+        result = await _admin_assistant.chat_async(message, user_id, db)
         _audit("admin_chat", {"msg": message[:80]}, user_id)
         return result
     except Exception as e:

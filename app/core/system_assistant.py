@@ -29,8 +29,15 @@ class SystemAssistant:
     """
     景幻仙姑系统助理。
 
-    每个实例绑定一次对话会话，维护对话上下文。
-    有 LLM 时使用 LLM + 知识库自然对话，无 LLM 时使用规则回复。
+    她精通仿生智脑的每一层存储、每一条线索、每一个文件。
+    就像大英图书管理员熟悉每一排书架一样。
+
+    能力：
+      - 直接检索三库数据（实时查询数据库）
+      - 按话题/情感/时间/状态定位资料
+      - 统计馆藏详情
+      - 介绍系统和使用方法
+      - 执行微调操作 + 生成改善建议
     """
 
     def __init__(self, llm_client=None, knowledge_base=None):
@@ -39,54 +46,166 @@ class SystemAssistant:
         self.kb = knowledge_base
         self._stats = {"sessions": 0, "messages": 0, "tweaks": 0, "proposals": 0}
 
-    # ── 核心对话 ──
+    # ═══════════════════════════════════════════════════════════════
+    # 核心对话（异步 — 支持数据库查询）
+    # ═══════════════════════════════════════════════════════════════
 
-    def chat(self, message: str, user_id: str = "admin") -> dict:
-        """
-        用户发送一条消息给景幻仙姑。
-
-        优先使用 LLM + 知识库自然对话。
-        检测到微调/提案意图时，执行对应操作。
-        """
+    async def chat_async(self, message: str, user_id: str, db=None) -> dict:
         self.conversation.append({"role": "user", "content": message, "timestamp": datetime.now(timezone.utc).isoformat()})
         self._stats["messages"] += 1
-
-        # 先检测是否是可执行的操作（微调/提案）
-        # 这些必须精确执行，不能交给 LLM 自由发挥
         intent = self._parse_intent(message)
+        actions = []; proposal = None; reply = ""
 
-        actions = []
-        proposal = None
-
-        # 提案 — 必须精确生成结构化数据
         if intent["type"] == "proposal":
-            prop_result = self._generate_proposal(intent)
-            proposal = prop_result["proposal"]
-            self._stats["proposals"] += 1
-            reply = prop_result["summary"]
+            pr = self._generate_proposal(intent); proposal = pr["proposal"]
+            self._stats["proposals"] += 1; reply = pr["summary"]
+            self.conversation.append({"role":"assistant","content":reply,"actions":[],"proposal":True})
+            return {"reply":reply,"actions":[],"proposal":proposal,"history_length":len(self.conversation)//2}
 
-            self.conversation.append({"role": "assistant", "content": reply, "actions": actions, "proposal": True})
-            return {"reply": reply, "actions": actions, "proposal": proposal, "history_length": len(self.conversation) // 2}
-
-        # 微调 — 必须精确执行
         if intent["type"] == "tweak":
-            tweak_result = self._handle_tweak(intent)
-            reply = tweak_result["reply"]
-            actions = tweak_result.get("actions", [])
+            tr = self._handle_tweak(intent); reply = tr["reply"]; actions = tr.get("actions",[])
             self._stats["tweaks"] += 1
+            self.conversation.append({"role":"assistant","content":reply,"actions":actions,"proposal":False})
+            return {"reply":reply,"actions":actions,"proposal":None,"history_length":len(self.conversation)//2}
 
-            self.conversation.append({"role": "assistant", "content": reply, "actions": actions, "proposal": False})
-            return {"reply": reply, "actions": actions, "proposal": None, "history_length": len(self.conversation) // 2}
+        if intent["type"] == "vault_query" and db is not None:
+            reply = await self._execute_vault_query(intent, db)
+            self.conversation.append({"role":"assistant","content":reply,"actions":[],"proposal":False})
+            return {"reply":reply,"actions":[],"proposal":None,"history_length":len(self.conversation)//2}
 
-        # 其他对话：优先使用 LLM 自然回答（如果有 LLM）
-        if self.llm and hasattr(self.llm, 'call') and self._is_llm_usable():
+        if intent["type"] == "status" and db is not None:
+            reply = await self._handle_vault_status(db)
+            self.conversation.append({"role":"assistant","content":reply,"actions":[],"proposal":False})
+            return {"reply":reply,"actions":[],"proposal":None,"history_length":len(self.conversation)//2}
+
+        if self.llm and hasattr(self.llm,'call') and self._is_llm_usable():
             reply = self._llm_chat(message)
         else:
-            # 无 LLM 时使用规则回复
             reply = self._rule_reply(intent, message)
+        self.conversation.append({"role":"assistant","content":reply,"actions":[],"proposal":False})
+        return {"reply":reply,"actions":[],"proposal":None,"history_length":len(self.conversation)//2}
 
-        self.conversation.append({"role": "assistant", "content": reply, "actions": [], "proposal": False})
-        return {"reply": reply, "actions": [], "proposal": None, "history_length": len(self.conversation) // 2}
+    def chat(self, message: str, user_id: str = "admin") -> dict:
+        """同步兼容接口（无数据库查询能力）"""
+        self.conversation.append({"role":"user","content":message,"timestamp":datetime.now(timezone.utc).isoformat()})
+        self._stats["messages"] += 1
+        intent = self._parse_intent(message)
+        if intent["type"] == "proposal":
+            pr=self._generate_proposal(intent);self._stats["proposals"]+=1
+            self.conversation.append({"role":"assistant","content":pr["summary"],"actions":[],"proposal":True})
+            return {"reply":pr["summary"],"actions":[],"proposal":pr["proposal"],"history_length":len(self.conversation)//2}
+        if intent["type"] == "tweak":
+            tr=self._handle_tweak(intent);self._stats["tweaks"]+=1
+            self.conversation.append({"role":"assistant","content":tr["reply"],"actions":tr["actions"],"proposal":False})
+            return {"reply":tr["reply"],"actions":tr["actions"],"proposal":None,"history_length":len(self.conversation)//2}
+        reply=self._rule_reply(intent,message)
+        self.conversation.append({"role":"assistant","content":reply,"actions":[],"proposal":False})
+        return {"reply":reply,"actions":[],"proposal":None,"history_length":len(self.conversation)//2}
+
+    # ═══════════════════════════════════════════════════════════════
+    # 查库能力 — 大英图书管理员的真正实力
+    # ═══════════════════════════════════════════════════════════════
+
+    async def _execute_vault_query(self, intent: dict, db) -> str:
+        """执行三库查询请求，返回格式化结果"""
+        qtype = intent.get("query_type", "general")
+        keyword = intent.get("keyword", "")
+
+        try:
+            if qtype == "search":
+                from app.domain.models import BlackDiamondEntity, GoldVaultEntity
+                from sqlalchemy import select, or_
+                like = f"%{keyword}%"
+                results = []
+                bd = await db.execute(select(BlackDiamondEntity).where(
+                    BlackDiamondEntity.is_deleted == False,
+                    or_(BlackDiamondEntity.core_facts.ilike(like),
+                        BlackDiamondEntity.event_type.ilike(like))
+                ).order_by(BlackDiamondEntity.decay_days.asc()).limit(10))
+                for r in bd.scalars():
+                    es = (r.emotional_spectrum or {}) if isinstance(r.emotional_spectrum, dict) else {}
+                    em = es.get("dominant_emotion", "")
+                    results.append(f"  [黑钻] {r.event_id} | {r.event_type} | {em} | {r.core_facts[:80]}")
+                gd = await db.execute(select(GoldVaultEntity).where(
+                    GoldVaultEntity.is_deleted == False,
+                    GoldVaultEntity.topic.ilike(like)
+                ).order_by(GoldVaultEntity.created_at.desc()).limit(5))
+                for r in gd.scalars():
+                    st = "已提炼" if r.is_refined else "待提炼"
+                    results.append(f"  [金库] {r.topic[:40]} | {st}")
+                if not results:
+                    return f"馆藏中未找到包含「{keyword}」的资料。试试其他关键词？"
+                return f"找到 {len(results)} 条记录：\n" + "\n".join(results)
+
+            elif qtype == "count":
+                from app.domain.models import AlluvialRecord, GoldVaultEntity, BlackDiamondEntity
+                from sqlalchemy import select, func
+                a = (await db.execute(select(func.count(AlluvialRecord.id)))).scalar() or 0
+                g = (await db.execute(select(func.count(GoldVaultEntity.id)))).scalar() or 0
+                bd = (await db.execute(select(func.count(BlackDiamondEntity.id)))).scalar() or 0
+                ap = (await db.execute(select(func.count(AlluvialRecord.id)).where(AlluvialRecord.status=="qc_pending"))).scalar() or 0
+                gr = (await db.execute(select(func.count(GoldVaultEntity.id)).where(GoldVaultEntity.is_refined==True))).scalar() or 0
+                ba = (await db.execute(select(func.count(BlackDiamondEntity.id)).where(
+                    BlackDiamondEntity.is_active==True, BlackDiamondEntity.is_deleted==False))).scalar() or 0
+                return (
+                    f"馆藏统计：\n"
+                    f"  砂金库 {a} 条（{ap} 待质检）\n"
+                    f"  金库 {g} 条（{gr} 已提炼）\n"
+                    f"  黑钻库 {bd} 条（{ba} 活跃）\n"
+                    f"  总计 {a+g+bd} 条")
+
+            elif qtype == "diamond_detail":
+                from app.domain.models import BlackDiamondEntity
+                from sqlalchemy import select
+                n = int(keyword) if keyword.isdigit() else 10
+                rows = (await db.execute(select(BlackDiamondEntity).where(
+                    BlackDiamondEntity.is_deleted==False, BlackDiamondEntity.is_active==True
+                ).order_by(BlackDiamondEntity.created_at.desc()).limit(min(n, 50)))).scalars().all()
+                if not rows:
+                    return "黑钻库暂无活跃事件。"
+                lines = [f"黑钻库最近 {len(rows)} 条活跃事件："]
+                for r in rows:
+                    es = r.emotional_spectrum or {}
+                    em = es.get("dominant_emotion","?") if isinstance(es,dict) else "?"
+                    tg = ", ".join((r.tags or [])[:3])
+                    lines.append(f"  [{r.event_type}] {em} | {r.decay_days}d | {r.core_facts[:80]}")
+                    lines.append(f"    标签: {tg}")
+                return "\n".join(lines)
+
+            elif qtype == "gold_detail":
+                from app.domain.models import GoldVaultEntity
+                from sqlalchemy import select
+                n = int(keyword) if keyword.isdigit() else 10
+                rows = (await db.execute(select(GoldVaultEntity).where(
+                    GoldVaultEntity.is_deleted==False
+                ).order_by(GoldVaultEntity.created_at.desc()).limit(min(n,50)))).scalars().all()
+                if not rows:
+                    return "金库暂无原声带记录。"
+                lines = [f"金库最近 {len(rows)} 条原声带："]
+                for r in rows:
+                    st = "已提炼" if r.is_refined else "待提炼"
+                    lines.append(f"  [{st}] {r.topic[:50]} | 创建于{r.created_at.strftime('%m-%d') if r.created_at else '?'}")
+                return "\n".join(lines)
+
+            else:
+                return "想查什么？告诉我关键词、库名，或说「统计馆藏」「黑钻事件」「金库原声带」。"
+
+        except Exception as e:
+            logger.error(f"查库失败: {e}")
+            return f"查库遇到问题：{str(e)[:100]}，系统正常，请重试。"
+
+    async def _handle_vault_status(self, db) -> str:
+        """实时馆藏状态"""
+        from app.domain.models import AlluvialRecord, GoldVaultEntity, BlackDiamondEntity
+        from sqlalchemy import select, func
+        try:
+            a = (await db.execute(select(func.count(AlluvialRecord.id)))).scalar() or 0
+            g = (await db.execute(select(func.count(GoldVaultEntity.id)))).scalar() or 0
+            bd = (await db.execute(select(func.count(BlackDiamondEntity.id)))).scalar() or 0
+            ap = (await db.execute(select(func.count(AlluvialRecord.id)).where(AlluvialRecord.status=="qc_pending"))).scalar() or 0
+            return f"馆藏状态：砂金库 {a}（{ap}待检）| 金库 {g} | 黑钻库 {bd} | 总计 {a+g+bd}"
+        except Exception as e:
+            return f"状态查询异常：{e}"
 
     # ── 规则回复（无 LLM 时的降级）──
 
@@ -172,56 +291,98 @@ class SystemAssistant:
     # ── 意图识别 ──
 
     def _parse_intent(self, message: str) -> dict:
-        """解析用户意图"""
-        msg = message.lower().strip()
+        """解析用户意图 — 识别查库、搜索、导航等"""
+        msg = message.strip(); ml = msg.lower()
 
         # 问候
-        if any(kw in msg for kw in ["你好", "您好", "hi", "hello", "在吗", "景幻", "仙姑"]):
-            if any(kw in msg for kw in ["介绍", "功能", "作用", "做什么", "是谁"]):
+        if any(kw in ml for kw in ["你好", "您好", "hi", "hello", "在吗", "景幻", "仙姑"]):
+            if any(kw in ml for kw in ["介绍", "功能", "作用", "做什么", "是谁"]):
                 return {"type": "system_intro", "topic": "self_intro"}
             return {"type": "greeting"}
 
-        # 改善建议（优先于功能咨询，防止"建议..."被"功能"关键词拦截）
-        if any(kw in msg for kw in ["建议", "改善", "改进", "优化", "重构", "新功能", "加一个", "能不能加", "觉得应该", "希望可以", "可不可以加"]):
-            return {"type": "proposal", "suggestion": message}
+        # 改善建议
+        if any(kw in ml for kw in ["建议", "改善", "改进", "优化", "重构", "新功能", "加一个", "能不能加", "觉得应该", "希望可以", "可不可以加"]):
+            return {"type": "proposal", "suggestion": msg}
+
+        # ──── 查库意图（景幻仙姑的图书管理员能力）────
+
+        # 统计
+        if any(kw in ml for kw in ["统计", "多少", "数量", "计数", "馆藏", "总", "盘点"]):
+            if any(kw in ml for kw in ["金库", "原声带", "gold"]):
+                return {"type": "vault_query", "query_type": "gold_detail", "keyword": "20"}
+            if any(kw in ml for kw in ["黑钻", "diamond", "事件"]):
+                return {"type": "vault_query", "query_type": "diamond_detail", "keyword": "20"}
+            return {"type": "vault_query", "query_type": "count", "keyword": ""}
+
+        # 找/查/搜
+        if ml.startswith("找") or ml.startswith("查") or ml.startswith("搜"):
+            kw = msg[1:].strip()
+            if kw:
+                return {"type": "vault_query", "query_type": "search", "keyword": kw}
+            return {"type": "vault_query", "query_type": "general", "keyword": ""}
+
+        # 关于xxx
+        if any(kw in ml for kw in ["关于", "有关", "提到", "说过"]):
+            for p in ["关于", "有关", "提到", "说过"]:
+                if p in ml:
+                    kw = msg[msg.find(p)+len(p):].strip()
+                    for suf in ["的资料", "的内容", "的信息", "的记录", "的事情", "的对话"]:
+                        if kw.endswith(suf):
+                            kw = kw[:-len(suf)].strip()
+                    if kw:
+                        return {"type": "vault_query", "query_type": "search", "keyword": kw}
+
+        # 看/查看某库
+        if any(kw in ml for kw in ["金库", "原声带"]):
+            return {"type": "vault_query", "query_type": "gold_detail", "keyword": "20"}
+        if any(kw in ml for kw in ["黑钻", "精选记忆"]):
+            return {"type": "vault_query", "query_type": "diamond_detail", "keyword": "20"}
+
+        # 最近/最新
+        if any(kw in ml for kw in ["最近", "最新", "新存入", "新入库"]):
+            return {"type": "vault_query", "query_type": "gold_detail", "keyword": "10"}
 
         # 系统介绍
-        if any(kw in msg for kw in ["介绍系统", "系统介绍", "架构", "三库", "是什么系统", "这个系统", "仿生智脑", "bionic"]):
+        if any(kw in ml for kw in ["介绍系统", "系统介绍", "架构", "三库", "是什么系统", "这个系统", "仿生智脑", "bionic"]):
             topic = "overview"
-            if "砂金" in msg: topic = "alluvial"
-            elif "金库" in msg: topic = "gold"
-            elif "黑钻" in msg: topic = "diamond"
-            elif "架构" in msg: topic = "architecture"
+            if "砂金" in ml: topic = "alluvial"
+            elif "金库" in ml: topic = "gold"
+            elif "黑钻" in ml: topic = "diamond"
+            elif "架构" in ml: topic = "architecture"
             return {"type": "system_intro", "topic": topic}
 
-        # 微调请求（小改动）
-        if any(kw in msg for kw in ["微调", "改一下", "修改", "调一下", "帮忙改", "帮我改", "改个", "设置", "重新生成", "重新计算", "触发"]):
-            return self._parse_tweak_intent(msg)
+        # 微调
+        if any(kw in ml for kw in ["微调", "改一下", "修改", "调一下", "帮忙改", "帮我改", "改个", "设置", "重新生成", "重新计算", "触发"]):
+            return self._parse_tweak_intent(ml)
 
         # 功能咨询
-        if any(kw in msg for kw in ["怎么用", "如何使用", "功能", "能做什么", "方法", "注意", "注意事项", "有什么用", "说明"]):
+        if any(kw in ml for kw in ["怎么用", "如何使用", "功能", "能做什么", "方法", "注意", "注意事项", "有什么用", "说明"]):
             feature = "usage"
-            if "提炼" in msg: feature = "refine"
-            elif "检索" in msg or "搜索" in msg: feature = "search"
-            elif "上传" in msg: feature = "upload"
-            elif "删除" in msg: feature = "delete"
-            elif "备份" in msg: feature = "backup"
-            elif "安全" in msg: feature = "security"
+            if "提炼" in ml: feature = "refine"
+            elif "检索" in ml or "搜索" in ml: feature = "search"
+            elif "上传" in ml: feature = "upload"
+            elif "删除" in ml: feature = "delete"
+            elif "备份" in ml: feature = "backup"
+            elif "安全" in ml: feature = "security"
             return {"type": "feature_question", "feature": feature}
 
-        # 微调请求（小改动）
-        if any(kw in msg for kw in ["微调", "改一下", "修改", "调一下", "帮忙改", "帮我改", "改个", "设置"]):
-            return self._parse_tweak_intent(msg)
-
         # 反馈
-        if any(kw in msg for kw in ["反馈", "问题", "bug", "错误", "不好用", "不好", "遇到", "出错了", "报错"]):
-            return {"type": "feedback", "feedback": message}
+        if any(kw in ml for kw in ["反馈", "问题", "bug", "错误", "不好用", "遇到", "出错了", "报错"]):
+            return {"type": "feedback", "feedback": msg}
 
-        # 状态查询
-        if any(kw in msg for kw in ["状态", "健康", "统计", "running", "运行", "正常吗"]):
+        # 状态
+        if any(kw in ml for kw in ["状态", "健康", "running", "运行", "正常吗", "还好吗"]):
             return {"type": "status"}
 
         # 帮助
+        if any(kw in ml for kw in ["帮助", "help", "能做什么"]):
+            return {"type": "help"}
+
+        # 无分类：尝试作为关键词搜索
+        if len(ml) >= 2 and not any(kw in ml for kw in ["的", "了", "吗", "吧", "呢", "啊"]):
+            return {"type": "vault_query", "query_type": "search", "keyword": msg}
+
+        return {"type": "unknown", "original": msg}  # 修复变量名
         if any(kw in msg for kw in ["帮助", "help", "命令", "能做什么", "有什么功能"]):
             return {"type": "help"}
 
