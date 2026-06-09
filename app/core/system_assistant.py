@@ -30,10 +30,13 @@ class SystemAssistant:
     景幻仙姑系统助理。
 
     每个实例绑定一次对话会话，维护对话上下文。
+    有 LLM 时使用 LLM + 知识库自然对话，无 LLM 时使用规则回复。
     """
 
-    def __init__(self):
+    def __init__(self, llm_client=None, knowledge_base=None):
         self.conversation: list[dict] = []
+        self.llm = llm_client
+        self.kb = knowledge_base
         self._stats = {"sessions": 0, "messages": 0, "tweaks": 0, "proposals": 0}
 
     # ── 核心对话 ──
@@ -42,46 +45,120 @@ class SystemAssistant:
         """
         用户发送一条消息给景幻仙姑。
 
-        Args:
-            message: 用户输入
-            user_id: 用户标识
-
-        Returns:
-            {"reply": str, "actions": [...], "proposal": None|dict}
+        优先使用 LLM + 知识库自然对话。
+        检测到微调/提案意图时，执行对应操作。
         """
         self.conversation.append({"role": "user", "content": message, "timestamp": datetime.now(timezone.utc).isoformat()})
         self._stats["messages"] += 1
 
-        # 解析用户意图
+        # 先检测是否是可执行的操作（微调/提案）
+        # 这些必须精确执行，不能交给 LLM 自由发挥
         intent = self._parse_intent(message)
 
-        # 执行意图
-        reply = ""
         actions = []
         proposal = None
 
-        if intent["type"] == "greeting":
-            reply = self._handle_greeting()
-        elif intent["type"] == "system_intro":
-            reply = self._handle_system_intro(intent.get("topic", ""))
-        elif intent["type"] == "feature_question":
-            reply = self._handle_feature_question(intent.get("feature", ""))
-        elif intent["type"] == "tweak":
+        # 提案 — 必须精确生成结构化数据
+        if intent["type"] == "proposal":
+            prop_result = self._generate_proposal(intent)
+            proposal = prop_result["proposal"]
+            self._stats["proposals"] += 1
+            reply = prop_result["summary"]
+
+            self.conversation.append({"role": "assistant", "content": reply, "actions": actions, "proposal": True})
+            return {"reply": reply, "actions": actions, "proposal": proposal, "history_length": len(self.conversation) // 2}
+
+        # 微调 — 必须精确执行
+        if intent["type"] == "tweak":
             tweak_result = self._handle_tweak(intent)
             reply = tweak_result["reply"]
             actions = tweak_result.get("actions", [])
-        elif intent["type"] == "proposal":
-            proposal = self._generate_proposal(intent)
-            reply = proposal["summary"]
-            self._stats["proposals"] += 1
-        elif intent["type"] == "feedback":
-            reply = self._handle_feedback(intent.get("feedback", ""))
-        elif intent["type"] == "status":
-            reply = self._handle_status_request()
-        elif intent["type"] == "help":
-            reply = self._handle_help()
+            self._stats["tweaks"] += 1
+
+            self.conversation.append({"role": "assistant", "content": reply, "actions": actions, "proposal": False})
+            return {"reply": reply, "actions": actions, "proposal": None, "history_length": len(self.conversation) // 2}
+
+        # 其他对话：优先使用 LLM 自然回答（如果有 LLM）
+        if self.llm and hasattr(self.llm, 'call') and self._is_llm_usable():
+            reply = self._llm_chat(message)
         else:
-            reply = self._handle_unknown(intent)
+            # 无 LLM 时使用规则回复
+            reply = self._rule_reply(intent, message)
+
+        self.conversation.append({"role": "assistant", "content": reply, "actions": [], "proposal": False})
+        return {"reply": reply, "actions": [], "proposal": None, "history_length": len(self.conversation) // 2}
+
+    # ── 规则回复（无 LLM 时的降级）──
+
+    def _rule_reply(self, intent: dict, message: str) -> str:
+        """无 LLM 时使用规则匹配回复"""
+        if intent["type"] == "greeting":
+            return self._handle_greeting()
+        elif intent["type"] == "system_intro":
+            return self._handle_system_intro(intent.get("topic", ""))
+        elif intent["type"] == "feature_question":
+            return self._handle_feature_question(intent.get("feature", ""))
+        elif intent["type"] == "feedback":
+            return self._handle_feedback(intent.get("feedback", ""))
+        elif intent["type"] == "status":
+            return self._handle_status_request()
+        elif intent["type"] == "help":
+            return self._handle_help()
+        else:
+            # 尝试从知识库搜索
+            if self.kb:
+                kb_info = self.kb.search(message)
+                if kb_info:
+                    return kb_info
+            return self._handle_unknown(intent)
+
+    def _is_llm_usable(self) -> bool:
+        """检查 LLM 是否可用（非 Mock 或 Mock 但有真实连接）"""
+        if not self.llm:
+            return False
+        # MockLLMClient 没有 call 能力，但 LLMClient 有
+        class_name = self.llm.__class__.__name__
+        return class_name == "LLMClient"
+
+    def _llm_chat(self, message: str) -> str:
+        """
+        使用 LLM + 知识库生成自然回复。
+        """
+        # 从知识库搜索相关信息
+        kb_context = ""
+        if self.kb:
+            kb_result = self.kb.search(message)
+            if kb_result:
+                kb_context = f"\n\n## 相关知识\n{kb_result}"
+
+        # 构建对话上下文
+        history = self.conversation[-6:-1]  # 最近几条（不包括当前消息）
+        history_text = ""
+        if history:
+            history_text = "\n".join(
+                f"{'用户' if h['role']=='user' else '景幻仙姑'}: {h['content'][:200]}"
+                for h in history
+            )
+
+        # 获取系统知识库 system prompt
+        system_prompt = self.kb.get_system_prompt() if self.kb else ""
+        system_prompt += f"\n\n## 对话历史\n{history_text}" if history_text else ""
+
+        # 构建用户 prompt
+        user_prompt = message
+        if kb_context:
+            user_prompt = f"{message}{kb_context}"
+
+        # 调用 LLM
+        try:
+            response = self.llm.call(user_prompt, system_prompt)
+            if response and len(response.strip()) > 10:
+                return response.strip()
+        except Exception as e:
+            logger.warning(f"LLM 对话失败: {e}")
+
+        # LLM 失败时降级到规则回复
+        return self._rule_reply(self._parse_intent(message), message)
 
         self.conversation.append({"role": "assistant", "content": reply, "actions": actions, "proposal": proposal is not None})
 
