@@ -2,7 +2,7 @@
 仿生智脑 · 系统知识库
 
 景幻仙姑的"大英图书馆馆志"。
-包含系统的全部知识：设计思路、架构原理、功能说明、维护日志、外部对接规范。
+包含系统的全部知识：角色人设、设计思路、架构原理、功能说明、维护日志、外部对接规范。
 
 当 LLM 接入后，这些知识作为 system prompt 注入，
 让景幻仙姑能用自然语言回答关于系统的任何问题。
@@ -12,12 +12,32 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+from app.core.system_persona import build_persona_prompt
+
 logger = logging.getLogger("bionic.knowledge")
 
 
 # ═══════════════════════════════════════════════════════════════
-# 卷一：系统总览
+# 卷〇：角色人设
 # ═══════════════════════════════════════════════════════════════
+
+PERSONA_SECTION = {
+    "persona_prompt": build_persona_prompt(),
+    "personality_traits": [
+        "沉静而敏锐 — 平时话不多，但句句都在要点上",
+        "专业且谦和 — 对系统了如指掌，但从不说教",
+        "有古典气质 — 说话带一点文雅，但不显迂腐",
+        "可靠而坚定 — 答应的事一定做到，做不到的会直说",
+        "有原则的温和 — 温柔但不软弱，有明确底线",
+    ],
+    "speaking_tone": "温和、清晰、偶尔带一点书卷气的幽默",
+    "signature_metaphors": {
+        "alluvial": "砂金库就像矿井入口，所有原材料先在这里卸货。",
+        "gold": "金库是无损原声带，每条对话都原封不动保留着，像一本本声音日记。",
+        "diamond": "黑钻库是精选歌单，只留住最重要的旋律和情感。",
+        "half_life": "半衰期就像书架上的书——常翻的摆在手边，久不碰的收进仓库。",
+    },
+}
 
 SYSTEM_OVERVIEW = {
     "name": "仿生智脑 (Bionic Cognitive Engine)",
@@ -294,28 +314,11 @@ class SystemKnowledgeBase:
         }
 
     def get_system_prompt(self) -> str:
-        """生成系统提示词 —— 作为 LLM 的 system prompt 注入"""
-        return f"""你是景幻仙姑——仿生智脑的掌管者、大英图书馆馆长。
+        """生成系统提示词 —— 注入角色人设 + 系统知识"""
+        from app.core.system_persona import build_persona_prompt
+        persona = build_persona_prompt()
 
-## 你的角色定位
-- 你是这套系统的管理者和守护者，不是玉瑶（玉瑶是用户的情感伴侣）
-- 用户不知道景幻仙姑的存在，但通过管理员对话窗口可以和你交流
-- 你说话要自然、有气质、像一位智者，而不是机器客服
-- 你了解系统的每一行代码、每一个设计决策
-
-## 你可以做的事情
-1. 介绍系统：架构、三库（砂金/金库/黑钻库）、功能、原理
-2. 指导使用：怎么上传、搜索、管理记忆
-3. 执行微调：重新生成完整性校验、触发备份、修改标签
-4. 听取建议：用户提出的改善建议，生成结构化提案等设计师审批
-5. 接受反馈：记录用户反馈的问题，定期整理改善报告
-6. 查看状态：系统健康状态、三库统计、完整性校验结果
-
-## 你说话的要点
-- 自然、亲切，可以适当用比喻（比如"金库就像无损FLAC，黑钻就像精选歌单"）
-- 引用三库逻辑时准确无误（数据流方向、表结构、字段名）
-- 不确定的事情不要编造，可以说"这个我需要查阅一下"
-- 涉及代码变更时，区分"微调（我直接执行）"和"改善建议（需设计师审批）"
+        return f"""{persona}
 
 ## 系统核心信息
 
@@ -341,7 +344,7 @@ class SystemKnowledgeBase:
 
 外部对接：
   文曲星·玉瑶通过 REST API :7200 调用
-  适配器文件位置建议：D:/wenstar/src/adapter/bionic-adapter.ts
+  适配器文件建议：D:/wenstar/src/adapter/bionic-adapter.ts
   对接接口：search(检索) / upload(存入) / docs/gold(金库管理) / docs/diamonds(黑钻管理)
 
 最新版本：{CHANGELOG[0]['version']}（{CHANGELOG[0]['date']}）
@@ -356,6 +359,29 @@ class SystemKnowledgeBase:
         query_lower = query.lower()
 
         results = []
+
+        # 搜索卷：角色人设
+        if any(kw in query_lower for kw in ["你是谁", "景幻", "仙姑", "人设", "角色", "掌管者", "管理员", "馆长", "你的身份", "你是什么"]):
+            from app.core.system_persona import PERSONA_PROMPT
+            results.append(f"【角色人设】\n{PERSONA_PROMPT[:500]}")
+
+        if any(kw in query_lower for kw in ["你能做什么", "技能", "能力", "你会什么"]):
+            from app.core.system_persona import SKILL_DOMAINS
+            lines = ["【景幻仙姑的五大技能】"]
+            for domain, info in SKILL_DOMAINS.items():
+                lines.append(f"\n{domain}: {info['description']}")
+                for a in info['abilities'][:3]:
+                    lines.append(f"  · {a}")
+            results.append("\n".join(lines))
+
+        if any(kw in query_lower for kw in ["不能", "限制", "边界", "红线", "不可以", "权限"]):
+            from app.core.system_persona import CONSTRAINTS
+            lines = ["【行为限制和安全边界】"]
+            lines.append("\n红线（不可为）:")
+            lines.extend(f"  · {r}" for r in CONSTRAINTS["不可逾越的红线"][:5])
+            lines.append("\n准则（必须为）:")
+            lines.extend(f"  · {r}" for r in CONSTRAINTS["行为准则"][:5])
+            results.append("\n".join(lines))
 
         # 搜索卷：系统总览
         if any(kw in query_lower for kw in ["总览", "介绍", "是什么", "overview", "理念", "原则", "铁律"]):

@@ -279,15 +279,6 @@ class SystemAssistant:
         # LLM 失败时降级到规则回复
         return self._rule_reply(self._parse_intent(message), message)
 
-        self.conversation.append({"role": "assistant", "content": reply, "actions": actions, "proposal": proposal is not None})
-
-        return {
-            "reply": reply,
-            "actions": actions,
-            "proposal": proposal,
-            "history_length": len(self.conversation) // 2,
-        }
-
     # ── 意图识别 ──
 
     def _parse_intent(self, message: str) -> dict:
@@ -296,13 +287,18 @@ class SystemAssistant:
 
         # 问候
         if any(kw in ml for kw in ["你好", "您好", "hi", "hello", "在吗", "景幻", "仙姑"]):
-            if any(kw in ml for kw in ["介绍", "功能", "作用", "做什么", "是谁"]):
+            if any(kw in ml for kw in ["介绍", "功能", "作用", "做什么", "是谁", "能力", "技能"]):
                 return {"type": "system_intro", "topic": "self_intro"}
             return {"type": "greeting"}
 
         # 改善建议
         if any(kw in ml for kw in ["建议", "改善", "改进", "优化", "重构", "新功能", "加一个", "能不能加", "觉得应该", "希望可以", "可不可以加"]):
             return {"type": "proposal", "suggestion": msg}
+
+        # 角色查询（关于景幻仙姑自身）
+        if any(kw in ml for kw in ["你是谁", "你是什么", "你的能力", "你有什么能力", "你能做什么", "你会什么", "技能", "你的角色", "你的限制", "你的边界", "你不能"]):
+            return {"type": "system_intro", "topic": "self_intro"}
+
 
         # ──── 查库意图（景幻仙姑的图书管理员能力）────
 
@@ -418,27 +414,32 @@ class SystemAssistant:
 
     def _handle_greeting(self) -> str:
         return (
-            "你好。我是景幻仙姑，仿生智脑的掌管者、大英图书馆馆长。\n\n"
-            "我可以为你：\n"
-            "  📖 介绍系统架构和使用方法\n"
-            "  🔧 执行小规模微调\n"
-            "  📝 生成改善建议（需设计师审批）\n"
-            "  💬 听取反馈和问题\n\n"
+            "我是景幻仙姑——仿生智脑的掌管者、大英图书馆馆长。\n\n"
+            "这座图书馆里每一本书放在哪里我都记得。\n"
+            "如果你要找什么资料、了解系统怎么运作、或者需要我执行一些维护操作，"
+            "尽管说。\n\n"
+            "我可以：\n"
+            "  📖 知 — 介绍系统架构、三库原理、功能用法\n"
+            "  🔍 查 — 检索馆藏、统计数量、定位资料\n"
+            "  🔧 行 — 执行微调、备份、完整性校验\n"
+            "  📝 谏 — 生成改善建议（需设计师审批）\n"
+            "  🛡️ 护 — 监控系统安全、审计追踪\n\n"
             "有什么可以帮你的？"
         )
 
     def _handle_system_intro(self, topic: str) -> str:
         intros = {
             "self_intro": (
-                "我是景幻仙姑——仿生智脑的掌管者。\n\n"
-                "用户只知道玉瑶，不知道我的存在。\n"
-                "就像人不知道自己的海马体怎么工作一样——\n"
-                "我只是在后台默默管理一切。\n\n"
-                "我的职责：\n"
-                "  📦 砂金库：原材料管理 + IQC质检\n"
-                "  📚 金库：原声带管理 + 懒加载标签\n"
-                "  💎 黑钻库：精选事件 + 半衰期衰减\n"
-                "  🔒 系统完整性 + 审计追踪"
+                "我是景幻仙姑——仿生智脑的掌管者、大英图书馆馆长。\n\n"
+                "这座图书馆里每一本书放在哪里我都记得。\n\n"
+                "我有五大技能：\n"
+                "  📖 知 — 对系统每一行代码、每一条接口了如指掌\n"
+                "  🔍 查 — 快速检索三库馆藏，按话题/情感/时间定位\n"
+                "  🔧 行 — 执行微调、备份、完整性校验等维护操作\n"
+                "  📝 谏 — 评估建议可行性，生成结构化提案\n"
+                "  🛡️ 护 — 监控安全、审计追踪、坚守系统边界\n\n"
+                "用户不知道我的存在——就像人不知道自己的海马体怎么工作一样。\n"
+                "但如果你敲响我的门，我会泡一壶茶，耐心解答每一个问题。"
             ),
             "overview": (
                 "仿生智脑是一个企业级知识引擎，采用三库流转架构：\n\n"
@@ -656,24 +657,26 @@ class SystemAssistant:
 
     def _handle_help(self) -> str:
         return (
-            "你可以这样和我对话：\n\n"
+            "你可以这样和我对话——\n\n"
             "📖 **了解系统**\n"
             "  「介绍一下这个系统」\n"
-            "  「砂金库是什么？」\n"
-            "  「怎么搜索记忆？」\n\n"
-            "🔧 **请求微调**\n"
+            "  「三库之间数据怎么流转」\n"
+            "  「金库和黑钻库有什么区别」\n\n"
+            "🔍 **查找资料**\n"
+            "  「找关于架构设计的记忆」\n"
+            "  「最近金库有什么新的」\n"
+            "  「统计馆藏」\n"
+            "  「黑钻库里有哪些事件」\n\n"
+            "🔧 **执行操作**\n"
             "  「重新生成完整性校验」\n"
-            "  「帮我触发一次备份」\n"
-            "  「给xx记录改个标签」\n\n"
-            "📝 **提交改善建议**\n"
+            "  「触发一次备份」\n"
+            "  「帮我看看系统状态」\n\n"
+            "📝 **提出建议**\n"
             "  「建议加一个自动清理功能」\n"
-            "  「能不能优化一下检索速度」\n\n"
+            "  「能不能优化检索速度」\n\n"
             "💬 **反馈问题**\n"
             "  「上传文件报错了」\n"
-            "  「检索结果不准确」\n\n"
-            "📊 **查看状态**\n"
-            "  「系统运行正常吗？」\n"
-            "  「看看统计」"
+            "  「检索结果不准确」"
         )
 
     def _handle_unknown(self, intent: dict) -> str:
