@@ -73,9 +73,31 @@ async def lifespan(app: FastAPI):
     # ═══════════════════════════════════════════════════════════════
     # 阶段 3：业务服务初始化
     # ═══════════════════════════════════════════════════════════════
+    # 先尝试真实 LLM，不可用时自动降级到 Mock LLM（测试/演示模式）
+    from app.infrastructure.llm_client import MockLLMClient
     llm = LLMClient()
+    # 快速探测 LLM 是否可用
+    llm_available = False
+    try:
+        import httpx
+        test_req = httpx.get(
+            llm.api_url.replace("/api/chat", "/api/status"), timeout=3
+        )
+        llm_available = test_req.status_code < 500
+    except Exception:
+        pass
+
+    if not llm_available and settings.LLM_MOCK:
+        logger.warning("[WARN] 真实 LLM 不可用，使用 Mock LLM（演示模式）")
+        llm = MockLLMClient()
+    elif not llm_available:
+        logger.warning("[WARN] 真实 LLM 不可用，自学习功能受限")
+        logger.warning("  设置 LLM_MOCK=true 启用模拟模式，或启动 LLM 服务")
+    else:
+        logger.info("[OK] LLM 客户端已连接")
+
     consolidator = MemoryConsolidator(llm, vs)
-    searcher = HybridSearchService(vs)
+    searcher = HybridSearchService(vs, llm=llm)  # 注入 LLM 用于情感向量检索
 
     # 注入到 API 路由 + 注入安全模块
     init_services(vs, consolidator, searcher)

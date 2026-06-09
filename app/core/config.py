@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
 
+    # ── 模拟模式 ──
+    LLM_MOCK: bool = False  # 设为 True 使用 MockLLMClient（测试/演示用）
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

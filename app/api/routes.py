@@ -98,7 +98,7 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     return HealthResponse(
         status="ok",
         services=services,
-        version="1.0.0",
+        version="1.1.0",
     )
 
 
@@ -759,6 +759,67 @@ async def delete_diamond_doc(
     logger.info(f"用户删除黑钻: {doc_id} user={user_id}")
     _audit("doc_delete", {"doc_id": doc_id, "vault": "diamond"}, user_id)
     return DeleteResponse(status="deleted", id=doc_id, message="已删除（已停止衰减计算）")
+
+
+# ═══════════════════════════════════════════════════════════════
+# 路由：测试专用（仅调试模式可用）
+# ═══════════════════════════════════════════════════════════════
+
+@router.post("/ingest-test")
+async def ingest_test(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    🧪 测试专用：直接将对话注入金库（绕过砂金→IQC）。
+    仅开发调试模式可用。
+    """
+    import time as _time
+    from app.domain.models import GoldVaultEntity
+
+    topic = body.get("topic", "测试话题")
+    raw_dialogue_raw = body.get("raw_dialogue", "[]")
+    emotion_vec = body.get("emotion_vector")
+    tags = body.get("tags", ["待提炼"])
+    user_id = body.get("user_id", "test_user")
+
+    # 处理 raw_dialogue
+    if isinstance(raw_dialogue_raw, str):
+        try:
+            raw_dialogue = json.loads(raw_dialogue_raw)
+        except:
+            raw_dialogue = [{"role": "system", "content": raw_dialogue_raw}]
+    else:
+        raw_dialogue = raw_dialogue_raw
+
+    # 创建金库记录
+    gold = GoldVaultEntity(
+        topic=topic,
+        raw_dialogue=raw_dialogue,
+        emotion_vector=emotion_vec,
+        tags=tags,
+        is_refined=False,
+        user_id=user_id,
+    )
+    db.add(gold)
+    await db.commit()
+
+    # 如果有 emotion_vector 且 Qdrant 可用，写入向量库
+    if emotion_vec and vector_store and vector_store.available:
+        vector_store.upsert_vector(
+            point_id=gold.id,
+            vector=emotion_vec,
+            payload={
+                "topic": topic,
+                "user_id": user_id,
+            },
+        )
+        gold.vector_id = gold.id
+        await db.merge(gold)
+        await db.commit()
+
+    logger.info(f"[TEST] 注入金库: {gold.id} topic={topic}")
+    return {"id": gold.id, "topic": topic, "status": "injected"}
 
 
 # ═══════════════════════════════════════════════════════════════
