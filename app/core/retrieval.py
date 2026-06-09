@@ -46,15 +46,24 @@ class HybridSearchService:
                  llm: Optional[LLMClient] = None):
         self.vector_store = vector_store
         self.llm = llm
+        self._current_user_id: Optional[str] = None
 
     async def recall(
-        self, db: AsyncSession, query: str, limit: int = 5
+        self, db: AsyncSession, query: str, limit: int = 5,
+        user_id: Optional[str] = None,
     ) -> SearchResult:
         """
         执行优先级检索链。
+
+        Args:
+            db: 数据库会话
+            query: 检索关键词
+            limit: 最大返回条数
+            user_id: 用户 ID（可选，指定后只检索该用户的资料）
         """
         start = time.time()
         result = SearchResult(query=query)
+        self._current_user_id = user_id  # 暂存用于子查询
 
         # ── 第一优先级：黑钻库向量检索（情感相似度）──
         vector_result = await self._try_vector_search(db, query, limit)
@@ -115,6 +124,7 @@ class HybridSearchService:
             BlackDiamondEntity.is_active == True,
             BlackDiamondEntity.is_deleted == False,
         )
+        stmt = self._apply_user_filter(stmt, BlackDiamondEntity)
         rows = (await db.execute(stmt)).scalars().all()
 
         if not rows:
@@ -149,7 +159,9 @@ class HybridSearchService:
                 BlackDiamondEntity.event_type.ilike(like_pattern),
                 func.jsonb_extract_path_text(BlackDiamondEntity.tags, "$").ilike(like_pattern),
             ),
-        ).order_by(BlackDiamondEntity.decay_days.asc()).limit(limit)
+        )
+        bd_stmt = self._apply_user_filter(bd_stmt, BlackDiamondEntity)
+        bd_stmt = bd_stmt.order_by(BlackDiamondEntity.decay_days.asc()).limit(limit)
 
         bd_rows = (await db.execute(bd_stmt)).scalars().all()
 
@@ -177,7 +189,9 @@ class HybridSearchService:
                 GoldVaultEntity.topic.ilike(like_pattern),
                 func.jsonb_extract_path_text(GoldVaultEntity.raw_dialogue, "$").ilike(like_pattern),
             ),
-        ).order_by(GoldVaultEntity.created_at.desc()).limit(limit)
+        )
+        gold_stmt = self._apply_user_filter(gold_stmt, GoldVaultEntity)
+        gold_stmt = gold_stmt.order_by(GoldVaultEntity.created_at.desc()).limit(limit)
 
         gold_rows = (await db.execute(gold_stmt)).scalars().all()
 
@@ -221,6 +235,14 @@ class HybridSearchService:
                 logger.error(f"懒加载标签失败 {gold.id}: {e}")
 
         await db.commit()
+
+    # ── 用户数据过滤（数据隔离核心）──
+
+    def _apply_user_filter(self, stmt, model) -> object:
+        """如果设置了 user_id，为查询添加用户过滤条件"""
+        if self._current_user_id and hasattr(model, "user_id"):
+            return stmt.where(model.user_id == self._current_user_id)
+        return stmt
 
     # ── 辅助 ──
 

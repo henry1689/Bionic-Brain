@@ -208,17 +208,20 @@ async def search(
     q: str = Query(..., min_length=1, max_length=200, description="检索关键词"),
     limit: int = Query(5, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
+    user_id: str = Query("default_user", description="用户 ID（由调用方传入）"),
 ):
     """
     混合检索：黑钻(向量) → 黑钻(全文) → 金库(ILIKE) → 未命中。
 
     玉瑶说"我想起上次我们聊的..."，系统自动优先查黑钻库。
+    自动按当前用户过滤数据（默认用户为 default_user）。
+    玉瑶调用时请传入 X-User-Id 请求头，系统自动提取 user_id。
     """
     if not searcher:
-        # 降级为直接数据库查询
-        return await _fallback_search(db, q, limit)
+        # 降级为直接数据库查询（也传 user_id）
+        return await _fallback_search(db, q, limit, user_id)
 
-    result = await searcher.recall(db, q, limit)
+    result = await searcher.recall(db, q, limit, user_id=user_id)
 
     items = []
     for r in result.results:
@@ -230,17 +233,19 @@ async def search(
     )
 
 
-async def _fallback_search(db: AsyncSession, q: str, limit: int) -> SearchResponse:
-    """降级检索（无向量服务时）"""
+async def _fallback_search(db: AsyncSession, q: str, limit: int,
+                            user_id: str = "default_user") -> SearchResponse:
+    """降级检索（无向量服务时），自动按用户过滤"""
     import time
     start = time.time()
     like = f"%{q}%"
 
-    # 黑钻库优先
+    # 黑钻库优先（按用户过滤）
     stmt = select(BlackDiamondEntity).where(
         BlackDiamondEntity.is_active == True,
         BlackDiamondEntity.is_deleted == False,
         BlackDiamondEntity.core_facts.ilike(like),
+        BlackDiamondEntity.user_id == user_id,
     ).order_by(BlackDiamondEntity.decay_days.asc()).limit(limit)
 
     rows = (await db.execute(stmt)).scalars().all()
@@ -260,11 +265,12 @@ async def _fallback_search(db: AsyncSession, q: str, limit: int) -> SearchRespon
             results=items, latency_ms=round((time.time() - start) * 1000),
         )
 
-    # 金库降级
+    # 金库降级（按用户过滤）
     stmt2 = select(GoldVaultEntity).where(
         GoldVaultEntity.is_active == True,
         GoldVaultEntity.is_deleted == False,
         GoldVaultEntity.topic.ilike(like),
+        GoldVaultEntity.user_id == user_id,
     ).order_by(GoldVaultEntity.created_at.desc()).limit(limit)
 
     rows2 = (await db.execute(stmt2)).scalars().all()
@@ -782,6 +788,7 @@ async def ingest_test(
     emotion_vec = body.get("emotion_vector")
     tags = body.get("tags", ["待提炼"])
     user_id = body.get("user_id", "test_user")
+    vad_spectrum = body.get("vad_spectrum")
 
     # 处理 raw_dialogue
     if isinstance(raw_dialogue_raw, str):
@@ -792,11 +799,13 @@ async def ingest_test(
     else:
         raw_dialogue = raw_dialogue_raw
 
-    # 创建金库记录
+    # 创建金库记录（歌词+曲谱一体存储）
     gold = GoldVaultEntity(
         topic=topic,
         raw_dialogue=raw_dialogue,
         emotion_vector=emotion_vec,
+        vad_spectrum=vad_spectrum,
+        vad_pending=vad_spectrum is None,  # 无VAD则标记待谱曲
         tags=tags,
         is_refined=False,
         user_id=user_id,

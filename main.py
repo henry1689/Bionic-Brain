@@ -99,6 +99,26 @@ async def lifespan(app: FastAPI):
     consolidator = MemoryConsolidator(llm, vs)
     searcher = HybridSearchService(vs, llm=llm)  # 注入 LLM 用于情感向量检索
 
+    # ── 初始化 MinIO 存储加密 ──
+    from app.security.encryption import FileEncryptor
+    from app.infrastructure.storage import StorageManager
+    encryptor = FileEncryptor()
+    storage_mgr = StorageManager(encryptor=encryptor)
+    if storage_mgr.initialize():
+        logger.info("[OK] MinIO 对象存储已就绪（AES-256-GCM 加密）")
+    else:
+        logger.warning("[WARN] MinIO 不可用，存储将降级为仅数据库")
+
+    # ── 阶段 4：后台工作者（IQC/提炼/衰减 — 连接三库闭环）──
+    from app.core.background_worker import BackgroundWorker
+    bg_worker = BackgroundWorker(
+        db_manager=db_manager,
+        refiner=consolidator,
+        celery_enabled=settings.CELERY_ENABLED,
+    )
+    await bg_worker.start()
+    logger.info("[OK] 后台工作者已启动（IQC质检/记忆提炼/半衰期衰减）")
+
     # ── 初始化景幻仙姑系统助理 + 知识库 ──
     from app.core.system_knowledge import SystemKnowledgeBase
     from app.core.system_assistant import SystemAssistant
@@ -123,6 +143,7 @@ async def lifespan(app: FastAPI):
     # ═══════════════════════════════════════════════════════════════
     # 关闭
     # ═══════════════════════════════════════════════════════════════
+    await bg_worker.stop()
     await db_manager.close()
     logger.info("仿生智脑已关闭。景幻仙姑回归虚无。")
 
