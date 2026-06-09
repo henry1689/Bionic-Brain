@@ -924,7 +924,7 @@ async def trigger_backup():
 
 @router.get("/security/backups")
 async def list_backups():
-    """📦 列出所有备份"""
+    """列出所有备份"""
     try:
         from app.core.backup import BackupManager
         backup = BackupManager()
@@ -932,3 +932,71 @@ async def list_backups():
         return {"backups": backups}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════════
+# 路由：景幻仙姑管理员对话 (Admin Chat)
+# ═══════════════════════════════════════════════════════════════
+
+_admin_assistant = None
+
+
+def _set_admin_assistant(assistant):
+    global _admin_assistant
+    _admin_assistant = assistant
+
+
+@router.post("/admin/chat")
+async def admin_chat(
+    body: dict,
+    user_id: str = Depends(_get_user_id),
+):
+    """
+    与景幻仙姑对话。
+
+    Body: {"message": "你好，介绍一下这个系统"}
+    """
+    if not _admin_assistant:
+        raise HTTPException(status_code=503, detail="景幻仙姑助理未初始化")
+
+    message = body.get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="消息不能为空")
+    if len(message) > 2000:
+        raise HTTPException(status_code=400, detail="消息太长")
+
+    try:
+        result = _admin_assistant.chat(message, user_id)
+        _audit("admin_chat", {"msg": message[:80]}, user_id)
+        return result
+    except Exception as e:
+        logger.error(f"景幻对话失败: {e}")
+        return {"reply": f"对话处理异常", "actions": [], "proposal": None, "history_length": 0}
+
+
+@router.get("/admin/proposals")
+async def list_admin_proposals(
+    status: str = Query(None, description="filter: pending_review/approved/rejected"),
+):
+    """列出改善建议"""
+    if not _admin_assistant:
+        raise HTTPException(status_code=503, detail="未初始化")
+    props = _admin_assistant.get_proposals(status)
+    return {"total": len(props), "proposals": props}
+
+
+@router.get("/admin/conversation")
+async def get_admin_conversation():
+    """获取当前对话历史"""
+    if not _admin_assistant:
+        raise HTTPException(status_code=503, detail="未初始化")
+    return {"messages": _admin_assistant.conversation[-20:], "total": len(_admin_assistant.conversation)}
+
+
+@router.post("/admin/reset")
+async def reset_admin_conversation():
+    """重置对话"""
+    global _admin_assistant
+    if _admin_assistant:
+        _admin_assistant.conversation = []
+    return {"status": "ok", "message": "对话已重置"}

@@ -99,6 +99,13 @@ async def lifespan(app: FastAPI):
     consolidator = MemoryConsolidator(llm, vs)
     searcher = HybridSearchService(vs, llm=llm)  # 注入 LLM 用于情感向量检索
 
+    # ── 初始化景幻仙姑系统助理 ──
+    from app.core.system_assistant import SystemAssistant
+    admin_assistant = SystemAssistant()
+    from app.api.routes import _set_admin_assistant
+    _set_admin_assistant(admin_assistant)
+    logger.info("[OK] 景幻仙姑系统助理已就绪")
+
     # 注入到 API 路由 + 注入安全模块
     init_services(vs, consolidator, searcher)
     _inject_security_services()
